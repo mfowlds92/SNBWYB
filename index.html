@@ -55,6 +55,8 @@
           </div>
         </div>
       </section>
+
+      <div id="sidebarTrumpContainer"></div>
     </div>
   </aside>
 
@@ -92,9 +94,10 @@
 
     <section class="panel" data-tab="brag-results">
       <div class="panel-header-with-tooltip">
-        <div class="sort-buttons-group">
-          <button type="button" disabled onclick="window.sortCards(1)">Sort Suit</button>
-          <button type="button" disabled onclick="window.sortCards(2)">Sort Number</button>
+        <div class="sort-toggle sort-toggle-suit sort-toggle-disabled" aria-disabled="true">
+          <div class="sort-toggle-thumb"></div>
+          <button type="button" class="sort-toggle-option active" disabled>Suit</button>
+          <button type="button" class="sort-toggle-option" disabled>Number</button>
         </div>
         <h2 style="display:none;">Brag Results</h2>
         <div class="tooltip-icon" title="Results from the Brag round">?</div>

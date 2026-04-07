@@ -22,6 +22,9 @@ let selectedYanivCardIds = [];
 let activeSortMode = 0; // 0 = none, 1 = suit, 2 = number
 let robotFlipAnimating = false;
 let robotFlipFaces = {};
+let activeYanivDrawHighlightSource = null;
+let activeYanivDrawHighlightTimer = null;
+let lastSeenYanivDrawEventId = 0;
 let nameInputDirty = false;
 let lastLobbySyncAt = 0;
 let lobbySyncIntervalId = null;
@@ -258,6 +261,20 @@ console.log(state);
   if (!state?.whist?.robotNoBotPending) {
     robotFlipAnimating = false;
     robotFlipFaces = {};
+  }
+
+  const drawEventId = state?.yaniv?.lastDrawAction?.eventId || 0;
+  if (drawEventId > lastSeenYanivDrawEventId) {
+    lastSeenYanivDrawEventId = drawEventId;
+    activeYanivDrawHighlightSource = state.yaniv.lastDrawAction?.source || null;
+    if (activeYanivDrawHighlightTimer) {
+      clearTimeout(activeYanivDrawHighlightTimer);
+    }
+    activeYanivDrawHighlightTimer = setTimeout(() => {
+      activeYanivDrawHighlightSource = null;
+      activeYanivDrawHighlightTimer = null;
+      render();
+    }, 1000);
   }
 
   render();
@@ -749,6 +766,26 @@ function sortCards(sortby) {
 
   render(); // Re-render to display the sorted cards
 }
+
+function renderSortToggle(disabled = false) {
+  const currentMode = activeSortMode === 2 ? 2 : 1;
+  const sliderClass = [
+    "sort-toggle",
+    currentMode === 2 ? "sort-toggle-number" : "sort-toggle-suit",
+    disabled ? "sort-toggle-disabled" : ""
+  ].filter(Boolean).join(" ");
+
+  const suitAction = disabled ? "" : `onclick="window.sortCards(1)"`;
+  const numberAction = disabled ? "" : `onclick="window.sortCards(2)"`;
+
+  return `
+    <div class="${sliderClass}" aria-disabled="${disabled ? "true" : "false"}">
+      <div class="sort-toggle-thumb"></div>
+      <button type="button" class="sort-toggle-option ${currentMode === 1 ? "active" : ""}" ${disabled ? "disabled" : ""} ${suitAction}>Suit</button>
+      <button type="button" class="sort-toggle-option ${currentMode === 2 ? "active" : ""}" ${disabled ? "disabled" : ""} ${numberAction}>Number</button>
+    </div>
+  `;
+}
 function saveAssignmentsHandler() {
   const me = getMyPlayer();
   if (!me) return;
@@ -1174,6 +1211,7 @@ function render() {
   updateSidebarVisibility();
 
   renderStatus();
+  renderSidebarTrump();
   updateStartGameButtonState();
   renderMyPlayerInfo();
   renderNameInput();
@@ -1211,7 +1249,7 @@ function resolveRobotNoBotHandler() {
     clearInterval(interval);
     robotFlipAnimating = false;
     socket.emit("resolveRobotNoBot", roomId);
-  }, 1200);
+  }, 2400);
 }
 
 function continueAfterRobotNoBotHandler() {
@@ -1238,6 +1276,32 @@ function updateStartGameButtonState() {
   startBtn.disabled = gameStarted || !everyoneNamed || !isOwner;
 }
 
+function buildTrumpCardHtml() {
+  if (!state?.trumpCard) {
+    return "Not set";
+  }
+
+  const suitSymbols = {
+    Hearts: "&hearts;",
+    Diamonds: "&diams;",
+    Clubs: "&clubs;",
+    Spades: "&spades;"
+  };
+  const suit = state.trumpCard.suit;
+  const symbol = suitSymbols[suit] || "🃏";
+  const colorClass = suit === "Hearts" || suit === "Diamonds" ? "red" : "black";
+  const backClass = getCardBackClass(state.trumpCard.backColor);
+
+  return `
+    <div class="card trump-mini-card ${backClass}">
+      <div class="trump-mini-content ${colorClass}">
+        <span class="trump-mini-rank">${state.trumpCard.rank}</span>
+        <span class="trump-mini-suit">${symbol}</span>
+      </div>
+    </div>
+  `;
+}
+
 
 
 function renderStatus() {
@@ -1253,28 +1317,6 @@ function renderStatus() {
   const roundValue = state.round ?? "â€”";
   const cardCountValue = (getWhistCardCount() || 0) + 8;
   const dealerValue = state.players[state.dealerIndex]?.name || "Unknown";
-  const trumpCardHtml = state.trumpCard
-    ? (() => {
-        const suitSymbols = {
-          Hearts: "&hearts;",
-          Diamonds: "&diams;",
-          Clubs: "&clubs;",
-          Spades: "&spades;"
-        };
-        const suit = state.trumpCard.suit;
-        const symbol = suitSymbols[suit] || "🃏";
-        const colorClass = suit === "Hearts" || suit === "Diamonds" ? "red" : "black";
-        const backClass = getCardBackClass(state.trumpCard.backColor);
-        return `
-          <div class="card trump-mini-card ${backClass}">
-            <div class="trump-mini-content ${colorClass}">
-              <span class="trump-mini-rank">${state.trumpCard.rank}</span>
-              <span class="trump-mini-suit">${symbol}</span>
-            </div>
-          </div>
-        `;
-      })()
-    : "Not set";
   let phaseValue = "Waiting";
   let detailValue = "";
 
@@ -1334,12 +1376,27 @@ function renderStatus() {
           <td>Detail</td>
           <td>${detailValue}</td>
         </tr>
-        <tr>
-          <td>Trump</td>
-          <td class="status-trump-cell">${trumpCardHtml}</td>
-        </tr>
       </tbody>
     </table>
+  `;
+}
+
+function renderSidebarTrump() {
+  const trumpEl = document.getElementById("sidebarTrumpContainer");
+  if (!trumpEl) return;
+
+  if (!state?.trumpCard) {
+    trumpEl.innerHTML = "";
+    return;
+  }
+
+  trumpEl.innerHTML = `
+    <section class="sidebar-subpanel sidebar-trump-panel">
+      <div class="status-trump">
+        <div class="status-trump-label">Trump</div>
+        <div class="card-row">${buildTrumpCardHtml()}</div>
+      </div>
+    </section>
   `;
 }
 
@@ -1388,8 +1445,12 @@ function renderPlayerStatusBoxes() {
     const phaseNomText = isWhistLive ? `${tricksWon}/${nominationText}` : `Nom: ${nominationText}`;
     const isLeader = (Number(player.score) || 0) === topScore;
     const isDealer = player.index === state.dealerIndex;
+    const isBragKnocker = state.brag?.started && state.brag?.knock?.playerIndex === player.index;
     const leaderIcon = isLeader ? `<span class="leader-crown-icon" title="Leader" aria-label="Leader"><i class="fa-solid fa-crown"></i></span>` : "";
     const dealerIcon = isDealer ? `<span class="dealer-card-icon" title="Dealer" aria-label="Dealer"><i class="fa-solid fa-cube"></i></span>` : "";
+    const knockIcon = isBragKnocker
+      ? `<span class="player-knock-icon" title="Knocked" aria-label="Knocked"><i class="fa-solid fa-hand-fist"></i></span>`
+      : "";
 
     let cardsForPhase = [];
     if (state.brag?.started) {
@@ -1406,15 +1467,19 @@ function renderPlayerStatusBoxes() {
           .map((card) => `<div class="status-mini-back ${getCardBackClass(card.backColor)}"></div>`)
           .join("")
       : "";
+    const boxClasses = ["player-status-box", statusClass, isBragKnocker ? "player-knocked" : ""]
+      .filter(Boolean)
+      .join(" ");
 
     return `
-      <div class="player-status-box ${statusClass}">
+      <div class="${boxClasses}">
         <div class="player-status-top">
           <div class="player-status-label">${player.name}${player.index === playerIndex ? ' <span class="you-icon" title="You" aria-label="You"><i class="fa-solid fa-user"></i></span>' : ""}${leaderIcon}${dealerIcon}</div>
           <div class="player-status-score"><strong>${player.score}</strong></div>
         </div>
         <div class="player-status-sub">${phaseNomText}</div>
         ${showMiniBacks ? `<div class="player-status-mini-backs">${miniBacksHtml}</div>` : ""}
+        ${knockIcon}
       </div>
     `;
   }).join("");
@@ -1760,10 +1825,7 @@ function renderSplitter() {
   const panelHeaderEl = document.querySelector('.panel[data-tab="splitter"] .panel-header-with-tooltip');
   if (panelHeaderEl) {
     panelHeaderEl.innerHTML = `
-      <div class="sort-buttons-group">
-        <button type="button" onclick="window.sortCards(1)">Sort Suit</button>
-        <button type="button" onclick="window.sortCards(2)">Sort Number</button>
-      </div>
+      ${renderSortToggle(false)}
       <h2 style="display:none;">Hand Splitter</h2>
       <div class="tooltip-icon" title="Split your hand into Basketball Brag, Yaniv, and Nomination Whist piles">?</div>
     `;
@@ -1834,10 +1896,7 @@ function renderBrag() {
   const panelHeaderEl = document.querySelector('.panel[data-tab="brag"] .panel-header-with-tooltip');
   if (panelHeaderEl) {
     panelHeaderEl.innerHTML = `
-      <div class="sort-buttons-group">
-        <button type="button" onclick="window.sortCards(1)">Sort Suit</button>
-        <button type="button" onclick="window.sortCards(2)">Sort Number</button>
-      </div>
+      ${renderSortToggle(false)}
       <h2 style="display:none;">Basketball Brag</h2>
       <div class="tooltip-icon" title="Players compete to have the best 3-card hand">?</div>
     `;
@@ -2008,10 +2067,7 @@ function renderYaniv() {
   const isYanivResultsView = !state.yaniv.started && !!state.yaniv.result;
   if (panelHeaderEl) {
     panelHeaderEl.innerHTML = `
-      <div class="sort-buttons-group">
-        <button type="button" ${isYanivResultsView ? "disabled" : ""} onclick="window.sortCards(1)">Sort Suit</button>
-        <button type="button" ${isYanivResultsView ? "disabled" : ""} onclick="window.sortCards(2)">Sort Number</button>
-      </div>
+      ${renderSortToggle(isYanivResultsView)}
       <h2 style="display:none;">Yaniv</h2>
       <div class="tooltip-icon" title="Draw and discard cards to get your hand total to 5 or less">?</div>
     `;
@@ -2104,17 +2160,21 @@ function renderYaniv() {
   const discardPileAction = canUsePileActions ? `onclick="window.discardAndDrawFromYanivDiscardHandler()"` : "";
   const drawPileAction = canUsePileActions ? `onclick="window.discardAndDrawFromYanivDeckHandler()"` : "";
   const pileActionStyle = canUsePileActions ? "cursor: pointer; opacity: 1;" : "cursor: not-allowed; opacity: 0.7;";
+  const discardPileHighlightClass = activeYanivDrawHighlightSource === "discard" ? "yaniv-pile-highlight" : "";
+  const drawPileHighlightClass = activeYanivDrawHighlightSource === "deck" ? "yaniv-pile-highlight" : "";
 
   const myHandHtml = myYanivHand.length > 0
     ? myYanivHand
         .map((card) => {
           const isSelected = selectedYanivCardIds.includes(card.id);
+          const selectionOrder = selectedYanivCardIds.indexOf(card.id);
+          const selectionPriority = selectionOrder > -1 ? 100 + selectionOrder : 1;
           return `
             <button
               type="button"
               class="split-card-button ${isSelected ? "selected-card" : ""}"
               onclick="window.toggleYanivCardSelection('${card.id}')"
-              style="margin: 0; ${state.yaniv.pendingDiscard.length > 0 ? "pointer-events: none; opacity: 0.5;" : ""}"
+              style="margin: 0; z-index: ${selectionPriority}; ${state.yaniv.pendingDiscard.length > 0 ? "pointer-events: none; opacity: 0.5;" : ""}"
             >
               ${cardToText(card)}
             </button>
@@ -2128,7 +2188,7 @@ function renderYaniv() {
       <div class="yaniv-info-box">
         <div class="split-piles-area normal-layout" style="display: grid; grid-template-columns: 1fr 1fr; margin-top: 0;">
           <div
-            class="split-pile split-pile-clickable"
+            class="split-pile split-pile-clickable ${discardPileHighlightClass}"
             style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px; ${pileActionStyle}"
             ${discardPileAction}
           >
@@ -2137,7 +2197,7 @@ function renderYaniv() {
             </div>
           </div>
           <div
-            class="split-pile split-pile-clickable"
+            class="split-pile split-pile-clickable ${drawPileHighlightClass}"
             style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px; ${pileActionStyle}"
             ${drawPileAction}
           >
@@ -2178,10 +2238,7 @@ function renderWhist() {
   const panelHeaderEl = document.querySelector('.panel[data-tab="whist"] .panel-header-with-tooltip');
   if (panelHeaderEl) {
     panelHeaderEl.innerHTML = `
-      <div class="sort-buttons-group">
-        <button type="button" ${isWhistResultsView ? "disabled" : ""} onclick="window.sortCards(1)">Sort Suit</button>
-        <button type="button" ${isWhistResultsView ? "disabled" : ""} onclick="window.sortCards(2)">Sort Number</button>
-      </div>
+      ${renderSortToggle(isWhistResultsView)}
       <h2 style="display:none;">Nomination Whist</h2>
       <div class="tooltip-icon" title="Nominate tricks and win exactly that many">?</div>
     `;

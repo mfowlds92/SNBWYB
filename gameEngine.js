@@ -76,7 +76,9 @@ yaniv: {
   justDrawnCard: null,
   canSlam: false,
   slamPlayerIndex: null,
-  selectedCardIds: []
+  selectedCardIds: [],
+  lastDrawAction: null,
+  drawEventCounter: 0
 },
     
     whist: {
@@ -426,12 +428,14 @@ function getWhistScoreForPlayer(state, tricksWon, nomination) {
 
 // ========== BRAG EVALUATION ==========
 const BRAG_RANK_VALUES = {
+  "Exact Prial": 10,
+  "Double Prial": 9,
   "Prial": 8,
   "Straight Flush": 7,
   "Straight": 6,
-  "Flush-Pair": 5,
+  "Pair Flush": 5,
   "Flush": 4,
-  "Suited Pair": 3,
+  "Pair Pair": 3,
   "Pair": 2,
   "High Card": 1
 };
@@ -490,7 +494,25 @@ function isPrial(cards) {
   return counts.includes(3);
 }
 
-function isSuitedPair(cards) {
+function countExactCardKeys(cards) {
+  const counts = {};
+  cards.forEach((card) => {
+    const key = `${card.rank}-${card.suit}`;
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return counts;
+}
+
+function getPrialVariant(cards) {
+  if (!isPrial(cards)) return null;
+
+  const exactCounts = Object.values(countExactCardKeys(cards));
+  if (exactCounts.includes(3)) return "Exact Prial";
+  if (exactCounts.includes(2)) return "Double Prial";
+  return "Prial";
+}
+
+function isPairPair(cards) {
   if (!hasPair(cards)) return false;
 
   const rankCounts = countRanks(cards);
@@ -581,21 +603,21 @@ function getPrimaryRankValues(cards) {
 
 function evaluateBragHand(cards) {
   const flush = isFlush(cards);
-  const prial = isPrial(cards);
+  const prialVariant = getPrialVariant(cards);
   const straight = isStraight(cards);
   const straightFlush = isStraightFlush(cards);
   const pair = hasPair(cards);
-  const suitedPair = isSuitedPair(cards);
+  const pairPair = isPairPair(cards);
   const flushPair = flush && pair;
 
   let category = "High Card";
 
-  if (prial) category = "Prial";
+  if (prialVariant) category = prialVariant;
   else if (straightFlush) category = "Straight Flush";
   else if (straight) category = "Straight";
-  else if (flushPair) category = "Flush-Pair";
+  else if (flushPair) category = "Pair Flush";
   else if (flush) category = "Flush";
-  else if (suitedPair) category = "Suited Pair";
+  else if (pairPair) category = "Pair Pair";
   else if (pair) category = "Pair";
 
   return {
@@ -1386,6 +1408,8 @@ newState.brag = {
   newState.yaniv.canSlam = false;
   newState.yaniv.slamPlayerIndex = null;
   newState.yaniv.selectedCardIds = [];
+  newState.yaniv.lastDrawAction = null;
+  newState.yaniv.drawEventCounter = 0;
 
   newState.whist.started = false;
   newState.whist.currentPlayerIndex = null;
@@ -1446,34 +1470,28 @@ function isYanivRun(cards) {
   const suits = new Set(cards.map((card) => card.suit));
   if (suits.size !== 1) return false;
 
-  const values = cards.map((card) => {
-    if (card.rank === "A") return 1;
+  const getRunValues = (aceHigh = false) => cards.map((card) => {
+    if (card.rank === "A") return aceHigh ? 14 : 1;
     if (card.rank === "J") return 11;
     if (card.rank === "Q") return 12;
     if (card.rank === "K") return 13;
     return Number(card.rank);
   });
 
-  const uniqueSorted = [...new Set(values)].sort((a, b) => a - b);
+  const isConsecutiveRun = (values) => {
+    const uniqueSorted = [...new Set(values)].sort((a, b) => a - b);
+    if (uniqueSorted.length !== cards.length) return false;
 
-  if (uniqueSorted.length < 3) return false;
-
-  for (let start = 0; start < uniqueSorted.length; start++) {
-    let runLength = 1;
-
-    for (let i = start + 1; i < uniqueSorted.length; i++) {
-      if (uniqueSorted[i] === uniqueSorted[i - 1] + 1) {
-        runLength += 1;
-        if (runLength >= 3) {
-          return true;
-        }
-      } else {
-        break;
+    for (let i = 1; i < uniqueSorted.length; i++) {
+      if (uniqueSorted[i] !== uniqueSorted[i - 1] + 1) {
+        return false;
       }
     }
-  }
 
-  return false;
+    return true;
+  };
+
+  return isConsecutiveRun(getRunValues(false)) || isConsecutiveRun(getRunValues(true));
 }
 
 function isValidYanivDiscard(cards) {
@@ -1675,6 +1693,13 @@ export function drawFromYanivDeck(state, playerIndex) {
     advanceYanivTurn(newState);
   }
 
+  newState.yaniv.drawEventCounter = (newState.yaniv.drawEventCounter || 0) + 1;
+  newState.yaniv.lastDrawAction = {
+    source: "deck",
+    playerIndex,
+    eventId: newState.yaniv.drawEventCounter
+  };
+
   return { state: newState };
 }
 
@@ -1706,6 +1731,12 @@ export function drawFromYanivDiscard(state, playerIndex) {
   newState.yaniv.justDrawnCard = null;
   newState.yaniv.canSlam = false;
   newState.yaniv.slamPlayerIndex = null;
+  newState.yaniv.drawEventCounter = (newState.yaniv.drawEventCounter || 0) + 1;
+  newState.yaniv.lastDrawAction = {
+    source: "discard",
+    playerIndex,
+    eventId: newState.yaniv.drawEventCounter
+  };
 
   advanceYanivTurn(newState);
 
@@ -1993,6 +2024,8 @@ newState.brag = {
   newState.yaniv.canSlam = false;
   newState.yaniv.slamPlayerIndex = null;
   newState.yaniv.selectedCardIds = [];
+  newState.yaniv.lastDrawAction = null;
+  newState.yaniv.drawEventCounter = 0;
 
   newState.whist.started = false;
   newState.whist.currentPlayerIndex = null;
@@ -2073,6 +2106,8 @@ export function jumpToRound(state, targetRound) {
   newState.yaniv.canSlam = false;
   newState.yaniv.slamPlayerIndex = null;
   newState.yaniv.selectedCardIds = [];
+  newState.yaniv.lastDrawAction = null;
+  newState.yaniv.drawEventCounter = 0;
 
   newState.whist.started = false;
   newState.whist.currentPlayerIndex = null;
