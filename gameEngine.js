@@ -7,7 +7,7 @@ const SUITS = ["Hearts", "Diamonds", "Clubs", "Spades"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
 const ROUND_CONFIG_BY_PLAYER_COUNT = {
-  2: [15, 14, 13, 12, 11, 10, 9, 9, 10, 11, 12, 13, 14, 15],
+  2: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
   3: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
   4: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
   5: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
@@ -88,6 +88,11 @@ yaniv: {
   lastWonTrickByPlayer: playerNames.map(() => []),
   wonTricksByPlayer: playerNames.map(() => []),
   wonTrickPiles: [],
+  robotNoBotPending: false,
+  robotNoBotAwaitingContinue: false,
+  robotNoBotMode: null,
+  robotNoBotResults: playerNames.map(() => null),
+  robotNoBotCoinResult: null,
   result: null,
   trickWinnerIndex: null,
   selectionsComplete: false,
@@ -131,9 +136,6 @@ export function getRoundHandSize(state) {
 }
 
 export function isBlindRound(state) {
-  if (state.players.length === 2) {
-    return state.round === 7 || state.round === 8;
-  }
   return state.round === 7;
 }
 
@@ -197,6 +199,7 @@ export function dealCards(state) {
     p.hand = [];
     p.assignments = null;
     p.nomination = null;
+    p.swapSelection = null;
   });
 
   if (isBlindRound(newState)) {
@@ -258,6 +261,9 @@ function dealBlindRound(state, cardsPerPlayer) {
       }
     });
   });
+
+  // Blind rounds skip manual splitter assignment.
+  newState.whist.selectionsComplete = true;
 
   return { state: newState };
 }
@@ -1096,10 +1102,69 @@ export function saveNomination(state, playerIndex, nominationValue) {
 function allPlayersHaveWhistSelections(state) {
   const requiredWhistCards = getWhistCardCount(state);
 
+  const swapMode = getRobotNoBotSwapMode(state);
+  if (swapMode) {
+    return state.players.every((player) => {
+      const split = player.swapSelection;
+      return (
+        !!split &&
+        Array.isArray(split.left) &&
+        split.left.length === swapMode.equalCount &&
+        Array.isArray(split.right) &&
+        split.right.length === swapMode.equalCount &&
+        Array.isArray(split.fixed) &&
+        split.fixed.length === swapMode.fixedCount
+      );
+    });
+  }
+
   return state.players.every((player) => {
     const selected = player.assignments?.whist || [];
     return selected.length === requiredWhistCards;
   });
+}
+
+function getRobotNoBotSwapMode(state) {
+  const whistCount = getWhistCardCount(state);
+  if (whistCount === 5) {
+    return {
+      equalTarget: "yaniv",
+      fixedTarget: "brag",
+      equalCount: 5,
+      fixedCount: 3
+    };
+  }
+
+  if (whistCount === 3) {
+    return {
+      equalTarget: "brag",
+      fixedTarget: "yaniv",
+      equalCount: 3,
+      fixedCount: 5
+    };
+  }
+
+  return null;
+}
+
+function applyRobotNoBotAssignmentsForPlayer(state, playerIndex, resultValue) {
+  const player = state.players[playerIndex];
+  if (!player || !player.swapSelection) return;
+  const mode = getRobotNoBotSwapMode(state);
+  if (!mode) return;
+
+  const split = player.swapSelection;
+  const whistCards = resultValue === "robot" ? split.right : split.left;
+  const otherCards = resultValue === "robot" ? split.left : split.right;
+
+  player.assignments = {
+    brag: [],
+    yaniv: [],
+    whist: whistCards
+  };
+
+  player.assignments[mode.fixedTarget] = split.fixed;
+  player.assignments[mode.equalTarget] = otherCards;
 }
 
 export function saveWhistSelection(state, playerIndex, selectedAssignments) {
@@ -1120,9 +1185,58 @@ export function saveWhistSelection(state, playerIndex, selectedAssignments) {
 
   const hand = player.hand || [];
   const requiredWhistCards = getWhistCardCount(newState);
+  const swapMode = getRobotNoBotSwapMode(newState);
 
   if (!selectedAssignments || typeof selectedAssignments !== "object") {
     return { error: "Invalid hand split" };
+  }
+
+  if (swapMode) {
+    const leftIds = Array.isArray(selectedAssignments.left) ? selectedAssignments.left : [];
+    const rightIds = Array.isArray(selectedAssignments.right) ? selectedAssignments.right : [];
+    const fixedIds = Array.isArray(selectedAssignments.fixed) ? selectedAssignments.fixed : [];
+
+    const allIds = [...leftIds, ...rightIds, ...fixedIds];
+    const uniqueIds = [...new Set(allIds)];
+
+    if (allIds.length !== hand.length) {
+      return { error: "You must assign every card" };
+    }
+
+    if (uniqueIds.length !== hand.length) {
+      return { error: "A card was assigned more than once" };
+    }
+
+    if (leftIds.length !== swapMode.equalCount || rightIds.length !== swapMode.equalCount) {
+      return { error: `Left and right piles must each have ${swapMode.equalCount} cards` };
+    }
+
+    if (fixedIds.length !== swapMode.fixedCount) {
+      return { error: `${swapMode.fixedTarget} pile must have exactly ${swapMode.fixedCount} cards` };
+    }
+
+    const leftCards = leftIds.map((cardId) => hand.find((card) => card.id === cardId));
+    const rightCards = rightIds.map((cardId) => hand.find((card) => card.id === cardId));
+    const fixedCards = fixedIds.map((cardId) => hand.find((card) => card.id === cardId));
+
+    if ([...leftCards, ...rightCards, ...fixedCards].some((card) => !card)) {
+      return { error: "One or more assigned cards were not found in your hand" };
+    }
+
+    player.swapSelection = {
+      left: leftCards,
+      right: rightCards,
+      fixed: fixedCards
+    };
+
+    if (allPlayersHaveWhistSelections(newState)) {
+      newState.whist.selectionsComplete = true;
+      newState.whist.robotNoBotPending = true;
+      newState.whist.robotNoBotMode = swapMode;
+      newState.whist.robotNoBotResults = newState.players.map(() => null);
+    }
+
+    return { state: newState };
   }
 
   const bragIds = Array.isArray(selectedAssignments.brag) ? selectedAssignments.brag : [];
@@ -1170,10 +1284,62 @@ export function saveWhistSelection(state, playerIndex, selectedAssignments) {
     whist: whistCards
   };
 
+  player.swapSelection = null;
+
   if (allPlayersHaveWhistSelections(newState)) {
   newState.whist.selectionsComplete = true;
 }
 
+  return { state: newState };
+}
+
+export function resolveRobotNoBot(state) {
+  const newState = structuredClone(state);
+
+  if (!newState.whist.selectionsComplete) {
+    return { error: "All hand splits must be saved first" };
+  }
+
+  if (!newState.whist.robotNoBotPending) {
+    return { error: "Robot/No-bot is not active for this round" };
+  }
+
+  if (!newState.whist.nominationsComplete) {
+    return { error: "All nominations must be complete before flip" };
+  }
+
+  const mode = getRobotNoBotSwapMode(newState);
+  if (!mode) {
+    return { error: "Robot/No-bot mode is not available this round" };
+  }
+
+  const coinResult = Math.random() < 0.5 ? "robot" : "nobot";
+  newState.whist.robotNoBotCoinResult = coinResult;
+  newState.whist.robotNoBotResults = newState.players.map(() => coinResult);
+
+  newState.players.forEach((_, playerIndex) => {
+    applyRobotNoBotAssignmentsForPlayer(
+      newState,
+      playerIndex,
+      newState.whist.robotNoBotResults[playerIndex]
+    );
+  });
+
+  newState.whist.robotNoBotPending = false;
+  newState.whist.robotNoBotAwaitingContinue = true;
+  newState.whist.robotNoBotMode = mode;
+
+  return { state: newState };
+}
+
+export function continueAfterRobotNoBot(state) {
+  const newState = structuredClone(state);
+
+  if (!newState.whist.robotNoBotAwaitingContinue) {
+    return { error: "Robot/No-bot results are not waiting for continue" };
+  }
+
+  newState.whist.robotNoBotAwaitingContinue = false;
   return { state: newState };
 }
 
@@ -1193,6 +1359,7 @@ export function startGame(state) {
     player.hand = [];
     player.assignments = null;
     player.nomination = null;
+    player.swapSelection = null;
   });
 
 newState.brag = {
@@ -1228,6 +1395,11 @@ newState.brag = {
   newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
   newState.whist.wonTricksByPlayer = newState.players.map(() => []);
   newState.whist.wonTrickPiles = [];
+  newState.whist.robotNoBotPending = false;
+  newState.whist.robotNoBotAwaitingContinue = false;
+  newState.whist.robotNoBotMode = null;
+  newState.whist.robotNoBotResults = newState.players.map(() => null);
+  newState.whist.robotNoBotCoinResult = null;
   newState.whist.result = null;
   newState.whist.trickWinnerIndex = null;
   newState.whist.selectionsComplete = false;
@@ -1794,6 +1966,7 @@ export function nextRound(state) {
     player.hand = [];
     player.assignments = null;
     player.nomination = null;
+    player.swapSelection = null;
   });
 
 newState.brag = {
@@ -1829,6 +2002,91 @@ newState.brag = {
   newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
   newState.whist.wonTricksByPlayer = newState.players.map(() => []);
   newState.whist.wonTrickPiles = [];
+  newState.whist.robotNoBotPending = false;
+  newState.whist.robotNoBotAwaitingContinue = false;
+  newState.whist.robotNoBotMode = null;
+  newState.whist.robotNoBotResults = newState.players.map(() => null);
+  newState.whist.robotNoBotCoinResult = null;
+  newState.whist.result = null;
+  newState.whist.trickWinnerIndex = null;
+  newState.whist.selectionsComplete = false;
+  newState.whist.nominationsComplete = false;
+
+  newState.currentRoundSummary = createCurrentRoundSummary(newState);
+
+  const dealResult = dealCards(newState);
+  if (dealResult.error) return dealResult;
+
+  newState = dealResult.state;
+
+  return { state: newState };
+}
+
+export function jumpToRound(state, targetRound) {
+  let newState = structuredClone(state);
+
+  const playerCount = newState.players.length;
+  const totalRounds = getTotalRounds(playerCount);
+  const roundNumber = Number(targetRound);
+
+  if (!Number.isInteger(roundNumber) || roundNumber < 1 || roundNumber > totalRounds) {
+    return { error: `Round must be between 1 and ${totalRounds}` };
+  }
+
+  newState.round = roundNumber;
+  newState.dealerIndex = (roundNumber - 1) % playerCount;
+
+  let deck = createDeck(playerCount);
+  deck = shuffleDeck(deck);
+
+  newState.deck = deck;
+  newState.trumpCard = drawTrumpCard(newState);
+
+  newState.players.forEach((player) => {
+    player.hand = [];
+    player.assignments = null;
+    player.nomination = null;
+    player.swapSelection = null;
+  });
+
+  newState.brag = {
+    started: false,
+    results: [],
+    communityCards: [],
+    currentPlayerIndex: null,
+    turnCount: 0,
+    turnsTakenByPlayer: newState.players.map(() => 0),
+    firstCycleComplete: false,
+    guruActive: false,
+    knockAvailable: false,
+    knock: null,
+    finalTurnsRemaining: 0
+  };
+
+  newState.yaniv.started = false;
+  newState.yaniv.drawPile = [];
+  newState.yaniv.discardPile = [];
+  newState.yaniv.currentPlayerIndex = null;
+  newState.yaniv.pendingDiscard = [];
+  newState.yaniv.result = null;
+  newState.yaniv.justDrawnCard = null;
+  newState.yaniv.canSlam = false;
+  newState.yaniv.slamPlayerIndex = null;
+  newState.yaniv.selectedCardIds = [];
+
+  newState.whist.started = false;
+  newState.whist.currentPlayerIndex = null;
+  newState.whist.leadSuit = null;
+  newState.whist.currentTrick = [];
+  newState.whist.tricksWon = newState.players.map(() => 0);
+  newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
+  newState.whist.wonTricksByPlayer = newState.players.map(() => []);
+  newState.whist.wonTrickPiles = [];
+  newState.whist.robotNoBotPending = false;
+  newState.whist.robotNoBotAwaitingContinue = false;
+  newState.whist.robotNoBotMode = null;
+  newState.whist.robotNoBotResults = newState.players.map(() => null);
+  newState.whist.robotNoBotCoinResult = null;
   newState.whist.result = null;
   newState.whist.trickWinnerIndex = null;
   newState.whist.selectionsComplete = false;

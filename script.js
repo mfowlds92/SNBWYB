@@ -1,6 +1,9 @@
 ﻿const socket = io();
 
-const roomId = "test-room";
+let roomId = localStorage.getItem("nsybwb_room_id") || null;
+let playerId = localStorage.getItem("nsybwb_player_id") || null;
+let lobbyRooms = [];
+let roomMeta = null;
 
 let state = null;
 let playerIndex = null;
@@ -17,6 +20,54 @@ let selectedBragCommunityCardId = null;
 // temporary client-side yaniv state
 let selectedYanivCardIds = [];
 let activeSortMode = 0; // 0 = none, 1 = suit, 2 = number
+let robotFlipAnimating = false;
+let robotFlipFaces = {};
+let nameInputDirty = false;
+let lastLobbySyncAt = 0;
+let lobbySyncIntervalId = null;
+let activeSidebarTab = "details";
+let chatMessages = [];
+
+function debugLogRooms(source, payload = {}) {
+  const snapshot = {
+    source,
+    roomId,
+    playerId,
+    lobbyRooms: lobbyRooms || [],
+    roomMeta: roomMeta || null,
+    ...payload
+  };
+  console.log("[NSYBWB][rooms]", snapshot);
+}
+
+function requestLobbyRoomsIfNeeded(force = false) {
+  const now = Date.now();
+  const canLobbySync = !state?.trumpCard;
+  if (!canLobbySync) return;
+  if (!force && now - lastLobbySyncAt <= 1200) return;
+  lastLobbySyncAt = now;
+  socket.emit("requestLobbyRooms");
+}
+
+function ensureLobbySyncInterval() {
+  if (lobbySyncIntervalId) return;
+  lobbySyncIntervalId = setInterval(() => {
+    const shouldSync = !state?.trumpCard && (!!roomId || !roomId);
+    if (!shouldSync) return;
+    requestLobbyRoomsIfNeeded(false);
+  }, 2000);
+}
+
+function getRoomPastelColor(roomKey) {
+  const key = String(roomKey || "ROOM");
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = ((hash << 5) - hash) + key.charCodeAt(i);
+    hash |= 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsla(${hue}, 65%, 85%, 0.85)`;
+}
 
 function getCardSortFunction(sortby) {
   // Define rank order
@@ -77,11 +128,95 @@ function applyActiveSortToCurrentPhase() {
   }
 }
 
-socket.emit("joinRoom", roomId);
+socket.emit("initSession", {
+  playerId,
+  playerName: localStorage.getItem("nsybwb_player_name") || "",
+  currentRoomId: roomId
+});
 
-socket.on("playerIndex", (index) => {
-  playerIndex = index;
+socket.on("sessionReady", (payload) => {
+  playerId = payload.playerId;
+  localStorage.setItem("nsybwb_player_id", playerId);
+  lobbyRooms = payload.rooms || [];
+
+  if (payload.currentRoomId) {
+    roomId = payload.currentRoomId;
+    localStorage.setItem("nsybwb_room_id", roomId);
+    if (typeof payload.playerIndex === "number") {
+      playerIndex = payload.playerIndex;
+    }
+  } else {
+    roomId = null;
+    playerIndex = null;
+    state = null;
+    roomMeta = null;
+    localStorage.removeItem("nsybwb_room_id");
+  }
+
+  debugLogRooms("sessionReady", { payload });
+  requestLobbyRoomsIfNeeded(true);
   render();
+});
+
+socket.on("lobbyUpdate", ({ rooms }) => {
+  lobbyRooms = rooms || [];
+  debugLogRooms("lobbyUpdate", { rooms });
+  render();
+});
+
+socket.on("roomJoined", ({ roomId: joinedRoomId, playerIndex: joinedPlayerIndex, ...meta }) => {
+  roomId = joinedRoomId;
+  playerIndex = joinedPlayerIndex;
+  roomMeta = { roomId: joinedRoomId, ...meta };
+  chatMessages = [];
+  localStorage.setItem("nsybwb_room_id", roomId);
+  debugLogRooms("roomJoined", { joinedRoomId, joinedPlayerIndex, meta });
+  requestLobbyRoomsIfNeeded(true);
+  renderChat();
+  render();
+});
+
+socket.on("roomMeta", (meta) => {
+  roomMeta = meta;
+  debugLogRooms("roomMeta", { meta });
+  requestLobbyRoomsIfNeeded(true);
+  render();
+});
+
+socket.on("gameEnded", () => {
+  roomId = null;
+  playerIndex = null;
+  state = null;
+  roomMeta = null;
+  activeTabOverride = null;
+  chatMessages = [];
+  localStorage.removeItem("nsybwb_room_id");
+  render();
+});
+
+socket.on("roomLeft", () => {
+  roomId = null;
+  playerIndex = null;
+  state = null;
+  roomMeta = null;
+  activeTabOverride = null;
+  chatMessages = [];
+  localStorage.removeItem("nsybwb_room_id");
+  requestLobbyRoomsIfNeeded(true);
+  render();
+});
+
+socket.on("chatHistory", ({ roomId: incomingRoomId, messages }) => {
+  if (!roomId || incomingRoomId !== roomId) return;
+  chatMessages = Array.isArray(messages) ? messages : [];
+  renderChat();
+});
+
+socket.on("chatMessage", ({ roomId: incomingRoomId, message }) => {
+  if (!roomId || incomingRoomId !== roomId || !message) return;
+  chatMessages = [...chatMessages, message];
+  setSidebarTab("chat");
+  renderChat();
 });
 
 socket.on("stateUpdate", (newState) => {
@@ -89,7 +224,7 @@ socket.on("stateUpdate", (newState) => {
 console.log(state);
   applyActiveSortToCurrentPhase();
   const myPlayer = playerIndex !== null ? state.players[playerIndex] : null;
-  const alreadySaved = !!myPlayer?.assignments;
+  const alreadySaved = !!myPlayer?.assignments || !!myPlayer?.swapSelection;
 
   if (alreadySaved) {
     selectedSplitCardIds = [];
@@ -99,12 +234,31 @@ console.log(state);
     tempAssignments = {};
   }
 
-  // clear brag selections whenever fresh server state arrives
-  selectedBragHandCardId = null;
-  selectedBragCommunityCardId = null;
+  // Preserve selections if cards still exist in current state.
+  const myBragHand = myPlayer?.assignments?.brag || [];
+  const communityCards = state?.brag?.communityCards || [];
+  const myYanivHand = myPlayer?.assignments?.yaniv || [];
 
-  // clear yaniv selections whenever fresh server state arrives
-  selectedYanivCardIds = [];
+  selectedBragHandCardId = myBragHand.some((card) => card.id === selectedBragHandCardId)
+    ? selectedBragHandCardId
+    : null;
+  selectedBragCommunityCardId = communityCards.some((card) => card.id === selectedBragCommunityCardId)
+    ? selectedBragCommunityCardId
+    : null;
+  selectedYanivCardIds = selectedYanivCardIds.filter((cardId) =>
+    myYanivHand.some((card) => card.id === cardId)
+  );
+
+  if (!alreadySaved && myPlayer?.hand) {
+    selectedSplitCardIds = selectedSplitCardIds.filter((cardId) =>
+      myPlayer.hand.some((card) => card.id === cardId)
+    );
+  }
+
+  if (!state?.whist?.robotNoBotPending) {
+    robotFlipAnimating = false;
+    robotFlipFaces = {};
+  }
 
   render();
 });
@@ -127,9 +281,23 @@ document.addEventListener("DOMContentLoaded", () => {
   const showScoreboardBtn = document.getElementById("showScoreboardBtn");
   if (showScoreboardBtn) {
     showScoreboardBtn.addEventListener("click", () => {
+      setSidebarTab("leaderboard");
       activeTabOverride = 'scoreboard';
       setActiveTab('scoreboard');
     });
+  }
+
+  const sidebarTabDetailsBtn = document.getElementById("sidebarTabDetailsBtn");
+  if (sidebarTabDetailsBtn) {
+    sidebarTabDetailsBtn.addEventListener("click", () => setSidebarTab("details"));
+  }
+  const sidebarTabLeaderboardBtn = document.getElementById("sidebarTabLeaderboardBtn");
+  if (sidebarTabLeaderboardBtn) {
+    sidebarTabLeaderboardBtn.addEventListener("click", () => setSidebarTab("leaderboard"));
+  }
+  const sidebarTabChatBtn = document.getElementById("sidebarTabChatBtn");
+  if (sidebarTabChatBtn) {
+    sidebarTabChatBtn.addEventListener("click", () => setSidebarTab("chat"));
   }
 
   const returnToGameBtn = document.getElementById("returnToGameBtn");
@@ -145,10 +313,43 @@ document.addEventListener("DOMContentLoaded", () => {
     saveNameBtn.addEventListener("click", saveNameHandler);
   }
 
+  const endGameBtn = document.getElementById("endGameBtn");
+  if (endGameBtn) {
+    endGameBtn.addEventListener("click", endGameHandler);
+  }
+
+  const nameInput = document.getElementById("nameInput");
+  if (nameInput) {
+    nameInput.addEventListener("input", () => {
+      nameInputDirty = true;
+    });
+  }
+
+  const jumpRoundBtn = document.getElementById("jumpRoundBtn");
+  if (jumpRoundBtn) {
+    jumpRoundBtn.addEventListener("click", jumpToRoundHandler);
+  }
+
+  const sendChatBtn = document.getElementById("sendChatBtn");
+  if (sendChatBtn) {
+    sendChatBtn.addEventListener("click", sendChatMessageHandler);
+  }
+  const chatInput = document.getElementById("chatInput");
+  if (chatInput) {
+    chatInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        sendChatMessageHandler();
+      }
+    });
+  }
+
   window.addEventListener("resize", () => {
     autoFitAllCardStacks();
   });
 
+  ensureLobbySyncInterval();
+  requestLobbyRoomsIfNeeded(true);
   render();
 });
 
@@ -214,12 +415,14 @@ function autoFitAllCardStacks() {
 }
 
 function updatePlayerName(newName) {
-  if (playerIndex === null || !state) return;
-  socket.emit("updatePlayerName", {
-    roomId,
-    playerIndex,
-    newName
-  });
+  if (roomId && playerIndex !== null && state) {
+    socket.emit("updatePlayerName", {
+      roomId,
+      playerIndex,
+      newName
+    });
+  }
+  localStorage.setItem("nsybwb_player_name", newName);
 }
 
 function renderMyPlayerInfo() {
@@ -245,17 +448,37 @@ function renderMyPlayerInfo() {
 function renderNameInput() {
   const nameInput = document.getElementById("nameInput");
   const saveNameBtn = document.getElementById("saveNameBtn");
-  if (!nameInput || !saveNameBtn || playerIndex === null || !state) return;
+  if (!nameInput || !saveNameBtn) return;
 
-  const myPlayer = state.players[playerIndex];
-  nameInput.value = myPlayer?.name || "";
-  const gameStarted = !!state.trumpCard;
-  nameInput.disabled = gameStarted;
+  const myPlayer = state && playerIndex !== null ? state.players[playerIndex] : null;
+  const serverName = myPlayer?.name || localStorage.getItem("nsybwb_player_name") || "";
+  const isFocused = document.activeElement === nameInput;
+  if (!nameInputDirty && !isFocused && nameInput.value !== serverName) {
+    nameInput.value = serverName;
+  }
+  const gameStarted = !!state?.trumpCard;
+  nameInput.disabled = false;
   saveNameBtn.disabled = gameStarted;
 }
 
 function startGameHandler() {
+  if (!roomId) {
+    alert("Create or join a room first.");
+    return;
+  }
   socket.emit("startGame", roomId);
+}
+
+function leaveRoomHandler() {
+  if (!roomId) return;
+  activeTabOverride = null;
+  socket.emit("leaveRoom", roomId);
+}
+
+function endRoomHandler() {
+  if (!roomId) return;
+  activeTabOverride = null;
+  socket.emit("endGame", roomId);
 }
 
 function saveNameHandler() {
@@ -266,7 +489,152 @@ function saveNameHandler() {
     alert("Please enter a name before saving.");
     return;
   }
+  nameInputDirty = false;
   updatePlayerName(newName);
+  render();
+}
+
+function jumpToRoundHandler() {
+  if (!state) return;
+  const maxRound = getTotalRoundsForCurrentGame();
+  const answer = prompt(`Jump to round (1-${maxRound})`, String(state.round || 1));
+  if (answer === null) return;
+  const target = Number(answer);
+  if (!Number.isInteger(target) || target < 1 || target > maxRound) {
+    alert(`Round must be between 1 and ${maxRound}`);
+    return;
+  }
+
+  socket.emit("jumpToRound", { roomId, round: target });
+}
+
+function createRoomHandler() {
+  const name = localStorage.getItem("nsybwb_player_name") || "";
+  if (!hasRealPlayerName(name)) {
+    alert("Save your name first.");
+    return;
+  }
+  const roomName = prompt("Enter room name", "Game Room");
+  if (roomName === null) return;
+  socket.emit("createRoom", { roomName: roomName.trim() || "Game Room", playerName: name });
+}
+
+function joinRoomHandler(targetRoomId) {
+  const name = localStorage.getItem("nsybwb_player_name") || "";
+  if (!hasRealPlayerName(name)) {
+    alert("Save your name first.");
+    return;
+  }
+  socket.emit("joinRoom", { roomId: targetRoomId, playerName: name });
+}
+
+function renderWaitingLobby() {
+  const waitingContent = document.getElementById("waitingContent");
+  const startBtn = document.getElementById("startGameBtn");
+  if (!waitingContent || !startBtn) return;
+
+  requestLobbyRoomsIfNeeded(false);
+
+  const savedName = localStorage.getItem("nsybwb_player_name") || "";
+  const hasName = hasRealPlayerName(savedName);
+
+  if (!hasName) {
+    waitingContent.innerHTML = `<div>Please enter and save your name to access the lobby.</div>`;
+    startBtn.style.display = "none";
+    return;
+  }
+
+  const stateNames = (state?.players || []).map((p) => p.name).filter(Boolean);
+  const metaNamesRaw = Array.isArray(roomMeta?.playerNames) ? roomMeta.playerNames.filter(Boolean) : [];
+  const metaNames = metaNamesRaw.length ? metaNamesRaw : (hasRealPlayerName(savedName) ? [savedName] : []);
+  const currentNames = stateNames.length ? stateNames : metaNames;
+  const currentCount = Math.max(
+    currentNames.length,
+    Number(roomMeta?.playersConnected || 0),
+    roomId ? 1 : 0
+  );
+
+  const currentRoomSummary = roomId && roomMeta
+    ? {
+        roomId: roomMeta.roomId || roomId,
+        roomName: roomMeta.roomName || roomId,
+        ownerPlayerId: roomMeta.ownerPlayerId,
+        playersConnected: currentCount,
+        playerCount: Math.max(currentCount, currentNames.length),
+        gameStarted: !!roomMeta.gameStarted,
+        playerNames: currentNames
+      }
+    : null;
+
+  const byRoom = new Map((lobbyRooms || []).map((room) => [room.roomId, room]));
+  if (currentRoomSummary) {
+    byRoom.set(currentRoomSummary.roomId, currentRoomSummary);
+  }
+  const allRooms = Array.from(byRoom.values());
+
+  const rows = allRooms
+    .map((room) => {
+      const roomColor = getRoomPastelColor(room.roomId);
+      const isCurrent = !!roomId && room.roomId === roomId;
+      const isOwner = isCurrent && room.ownerPlayerId === playerId;
+      const everyoneNamed = state ? state.players.every((player) => hasRealPlayerName(player.name)) : false;
+      const roomNamesSource = Array.isArray(room.playersList) ? room.playersList : room.playerNames;
+      const roomNames = Array.isArray(roomNamesSource) ? roomNamesSource.filter(Boolean) : [];
+      const resolvedRoomNames = roomNames.length
+        ? roomNames
+        : (room.ownerName ? [room.ownerName] : []);
+      const roomCount = Math.max(resolvedRoomNames.length, Number(room.playerCount || 0), isCurrent ? 1 : 0);
+      const enoughPlayers = roomCount >= 2;
+      const canStart = isCurrent && isOwner && everyoneNamed && enoughPlayers && !room.gameStarted;
+      const joinDisabled = !!roomId || !!room.gameStarted;
+      const actionButtons = isCurrent
+        ? (isOwner
+          ? `<button onclick="window.startGameHandler()" ${canStart ? "" : "disabled"}>Start</button><button onclick="window.endRoomHandler()">End</button>`
+          : `<button onclick="window.leaveRoomHandler()">Leave</button>`)
+        : `<button onclick="window.joinRoomHandler('${room.roomId}')" ${joinDisabled ? "disabled" : ""}>Join</button>`;
+
+      return `
+      <div class="split-pile lobby-room-card ${isCurrent ? "lobby-room-current" : ""}" style="background:${roomColor};">
+        <div class="lobby-room-header">
+          <div class="lobby-room-title"><strong>${room.roomName}</strong></div>
+          <div class="lobby-room-code"><strong>${room.roomId}</strong></div>
+        </div>
+        <div>Players: ${Math.max(roomCount, resolvedRoomNames.length)}</div>
+        <div class="lobby-room-names">${resolvedRoomNames.join(", ") || "-"}</div>
+        <div class="lobby-room-actions">${actionButtons}</div>
+      </div>
+    `;
+    })
+    .join("");
+
+  waitingContent.innerHTML = `
+    <div style="margin-bottom:10px;">
+      <button onclick="window.createRoomHandler()">Create Room</button>
+    </div>
+    <div class="lobby-rooms-grid">${rows || "<div>No rooms yet.</div>"}</div>
+  `;
+  startBtn.style.display = "none";
+}
+
+function getTotalRoundsForCurrentGame() {
+  if (!state) return 1;
+  const roundConfigByPlayerCount = {
+    2: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    3: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    4: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    5: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    6: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    7: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    8: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    9: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+    10: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15]
+  };
+  return (roundConfigByPlayerCount[state.players.length] || [1]).length;
+}
+
+function endGameHandler() {
+  if (!roomId) return;
+  socket.emit("endGame", roomId);
 }
 
 
@@ -351,7 +719,14 @@ function getUnassignedCards() {
 
 function getMyAssignmentCounts() {
   const counts = {};
-  const targets = getAssignmentTargets();
+  const swapMode = getRobotNoBotSwapModeClient();
+  const targets = swapMode
+    ? [
+        { key: "left", label: "Left Pile", required: swapMode.equalCount, color: "#D1D5DB" },
+        { key: "fixed", label: swapMode.fixedTarget === "brag" ? "Brag (Fixed)" : "Yaniv (Fixed)", required: swapMode.fixedCount, color: swapMode.fixedTarget === "brag" ? "#FF8888" : "#6BA8D0" },
+        { key: "right", label: "Right Pile", required: swapMode.equalCount, color: "#D1D5DB" }
+      ]
+    : getAssignmentTargets();
 
   targets.forEach((target) => {
     counts[target.key] = 0;
@@ -378,8 +753,18 @@ function saveAssignmentsHandler() {
   const me = getMyPlayer();
   if (!me) return;
 
-  const targets = getAssignmentTargets();
-  const counts = getMyAssignmentCounts();
+  const swapMode = getRobotNoBotSwapModeClient();
+  const targets = swapMode
+    ? [
+        { key: "left", label: "Left Pile", required: swapMode.equalCount },
+        { key: "fixed", label: swapMode.fixedTarget === "brag" ? "Brag (Fixed)" : "Yaniv (Fixed)", required: swapMode.fixedCount },
+        { key: "right", label: "Right Pile", required: swapMode.equalCount }
+      ]
+    : getAssignmentTargets();
+  const counts = {};
+  targets.forEach((target) => {
+    counts[target.key] = me.hand.filter((card) => tempAssignments[card.id] === target.key).length;
+  });
 
   for (const card of me.hand) {
     const assignedTo = tempAssignments[card.id];
@@ -396,11 +781,17 @@ function saveAssignmentsHandler() {
     }
   }
 
-  const assignments = {
-  brag: getCardsInPile("brag").map(c => c.id),
-  yaniv: getCardsInPile("yaniv").map(c => c.id),
-  whist: getCardsInPile("whist").map(c => c.id)
-};
+  const assignments = swapMode
+    ? {
+        left: me.hand.filter((card) => tempAssignments[card.id] === "left").map((c) => c.id),
+        right: me.hand.filter((card) => tempAssignments[card.id] === "right").map((c) => c.id),
+        fixed: me.hand.filter((card) => tempAssignments[card.id] === "fixed").map((c) => c.id)
+      }
+    : {
+        brag: getCardsInPile("brag").map((c) => c.id),
+        yaniv: getCardsInPile("yaniv").map((c) => c.id),
+        whist: getCardsInPile("whist").map((c) => c.id)
+      };
 
 socket.emit("saveWhistSelection", {
   roomId,
@@ -410,13 +801,25 @@ socket.emit("saveWhistSelection", {
 }
 
 function nextRoundHandler() {
+  if (state) {
+    const totalRounds = getTotalRoundsForCurrentGame();
+    const isFinalRound = (state.round || 0) >= totalRounds;
+    if (isFinalRound) {
+      activeTabOverride = "scoreboard";
+      setActiveTab("scoreboard");
+      render();
+      return;
+    }
+  }
+
+  activeTabOverride = "scoreboard";
   socket.emit("nextRound", roomId);
 }
 
 function getWhistCardCount() {
-  if (!state) return 0;
+  if (!state || !Array.isArray(state.players)) return 0;
   const roundConfigByPlayerCount = {
-    2: [15, 14, 13, 12, 11, 10, 9, 9, 10, 11, 12, 13, 14, 15],
+    2: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
     3: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
     4: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
     5: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
@@ -428,7 +831,39 @@ function getWhistCardCount() {
   };
 
   const config = roundConfigByPlayerCount[state.players.length];
-  return config[state.round - 1] - 8;
+  if (!config || !config.length) {
+    return 0;
+  }
+
+  const roundIndex = Math.max(0, Math.min((state.round || 1) - 1, config.length - 1));
+  return (config[roundIndex] || 0) - 8;
+}
+
+function isBlindRoundClient() {
+  if (!state) return false;
+  return state.round === 7;
+}
+
+function getRobotNoBotSwapModeClient() {
+  if (!state) return null;
+  const whistCount = getWhistCardCount();
+  if (whistCount === 5) {
+    return {
+      equalTarget: "yaniv",
+      fixedTarget: "brag",
+      equalCount: 5,
+      fixedCount: 3
+    };
+  }
+  if (whistCount === 3) {
+    return {
+      equalTarget: "brag",
+      fixedTarget: "yaniv",
+      equalCount: 3,
+      fixedCount: 5
+    };
+  }
+  return null;
 }
 
 function getPlayerOrderFromLeftOfDealer() {
@@ -627,6 +1062,84 @@ function setActiveTab(tabName, manual = false) {
   if (activePanel) activePanel.classList.add('active');
 }
 
+function setSidebarTab(tabName) {
+  activeSidebarTab = tabName;
+  const detailsBtn = document.getElementById("sidebarTabDetailsBtn");
+  const leaderboardBtn = document.getElementById("sidebarTabLeaderboardBtn");
+  const chatBtn = document.getElementById("sidebarTabChatBtn");
+  const detailsTab = document.getElementById("sidebarDetailsTab");
+  const leaderboardTab = document.getElementById("sidebarLeaderboardTab");
+  const chatTab = document.getElementById("sidebarChatTab");
+
+  if (detailsBtn) detailsBtn.classList.toggle("active", tabName === "details");
+  if (leaderboardBtn) leaderboardBtn.classList.toggle("active", tabName === "leaderboard");
+  if (chatBtn) chatBtn.classList.toggle("active", tabName === "chat");
+  if (detailsTab) detailsTab.classList.toggle("active", tabName === "details");
+  if (leaderboardTab) leaderboardTab.classList.toggle("active", tabName === "leaderboard");
+  if (chatTab) chatTab.classList.toggle("active", tabName === "chat");
+}
+
+function renderChat() {
+  const chatLog = document.getElementById("chatLog");
+  if (!chatLog) return;
+  chatLog.innerHTML = (chatMessages || [])
+    .map((msg) => `
+      <div class="chat-message">
+        <div class="chat-meta"><strong>${msg.playerName || "Player"}</strong> • ${new Date(msg.timestamp || Date.now()).toLocaleTimeString()}</div>
+        <div class="chat-text">${String(msg.text || "").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+      </div>
+    `)
+    .join("");
+
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function sendChatMessageHandler() {
+  if (!roomId) return;
+  const chatInput = document.getElementById("chatInput");
+  if (!chatInput) return;
+  const text = chatInput.value.trim();
+  if (!text) return;
+  socket.emit("sendChatMessage", { roomId, text });
+  chatInput.value = "";
+}
+
+function updateSidebarVisibility() {
+  const gameLayoutEl = document.querySelector(".game-layout");
+  const sidebarEl = document.querySelector(".game-sidebar");
+  const playerStatusBoxesEl = document.getElementById("playerStatusBoxes");
+  const sidebarButtons = document.querySelector(".compact-status-buttons");
+  const showScoreboardBtn = document.getElementById("showScoreboardBtn");
+  const jumpRoundBtn = document.getElementById("jumpRoundBtn");
+  const endGameBtn = document.getElementById("endGameBtn");
+  const statusInfo = document.querySelector(".status-info");
+  const gameStarted = !!state?.trumpCard;
+  const inLobby = !gameStarted;
+  const canControlGame = !!roomMeta && roomMeta.ownerPlayerId === playerId;
+
+  if (gameLayoutEl) {
+    gameLayoutEl.classList.toggle("lobby-wide", inLobby);
+  }
+  if (sidebarEl) sidebarEl.style.display = inLobby ? "none" : "";
+  if (playerStatusBoxesEl) playerStatusBoxesEl.style.display = inLobby ? "none" : "";
+  if (sidebarButtons) sidebarButtons.style.display = inLobby ? "none" : "";
+  if (statusInfo) statusInfo.style.display = inLobby ? "none" : "";
+
+  if (showScoreboardBtn) {
+    showScoreboardBtn.style.display = !inLobby ? "" : "none";
+  }
+
+  if (jumpRoundBtn) {
+    jumpRoundBtn.style.display = !inLobby && canControlGame ? "" : "none";
+    jumpRoundBtn.disabled = !canControlGame;
+  }
+
+  if (endGameBtn) {
+    endGameBtn.style.display = !inLobby && canControlGame ? "" : "none";
+    endGameBtn.disabled = !canControlGame;
+  }
+}
+
 function render() {
   // Determine which tab to show
   let activeTab = activeTabOverride || 'waiting';
@@ -637,6 +1150,10 @@ function render() {
     } else if (!state.whist.selectionsComplete) {
       activeTab = 'splitter';
     } else if (!state.whist.nominationsComplete) {
+      activeTab = 'whist';
+    } else if (state.whist.robotNoBotPending) {
+      activeTab = 'whist';
+    } else if (state.whist.robotNoBotAwaitingContinue) {
       activeTab = 'whist';
     } else if (state.whist.started) {
       activeTab = 'whist';
@@ -653,11 +1170,14 @@ function render() {
     }
   }
   setActiveTab(activeTab);
+  setSidebarTab(activeSidebarTab);
+  updateSidebarVisibility();
 
   renderStatus();
   updateStartGameButtonState();
   renderMyPlayerInfo();
   renderNameInput();
+  renderWaitingLobby();
   renderPlayerStatusBoxes();
   renderPlayers();
   renderSplitter();
@@ -665,11 +1185,37 @@ function render() {
   renderBragResults();
   renderYaniv();
   renderScoreboard();
+  renderChat();
   renderWhist();
 
   requestAnimationFrame(() => {
     autoFitAllCardStacks();
   });
+}
+
+function resolveRobotNoBotHandler() {
+  if (!state?.whist?.robotNoBotPending) return;
+  if (robotFlipAnimating) return;
+
+  const playerCount = state.players.length;
+  robotFlipAnimating = true;
+
+  const interval = setInterval(() => {
+    for (let i = 0; i < playerCount; i += 1) {
+      robotFlipFaces[i] = Math.random() < 0.5 ? "robot" : "nobot";
+    }
+    render();
+  }, 120);
+
+  setTimeout(() => {
+    clearInterval(interval);
+    robotFlipAnimating = false;
+    socket.emit("resolveRobotNoBot", roomId);
+  }, 1200);
+}
+
+function continueAfterRobotNoBotHandler() {
+  socket.emit("continueAfterRobotNoBot", roomId);
 }
 
 function hasRealPlayerName(name) {
@@ -680,11 +1226,16 @@ function hasRealPlayerName(name) {
 
 function updateStartGameButtonState() {
   const startBtn = document.getElementById("startGameBtn");
-  if (!startBtn || !state) return;
+  if (!startBtn) return;
+  if (!roomId || !roomMeta) {
+    startBtn.disabled = true;
+    return;
+  }
 
-  const everyoneNamed = state.players.every((player) => hasRealPlayerName(player.name));
-  const gameStarted = !!state.trumpCard;
-  startBtn.disabled = gameStarted || !everyoneNamed;
+  const everyoneNamed = state ? state.players.every((player) => hasRealPlayerName(player.name)) : false;
+  const gameStarted = !!state?.trumpCard || !!roomMeta.gameStarted;
+  const isOwner = roomMeta.ownerPlayerId === playerId;
+  startBtn.disabled = gameStarted || !everyoneNamed || !isOwner;
 }
 
 
@@ -698,7 +1249,9 @@ function renderStatus() {
     return;
   }
 
+  const roomValue = roomMeta?.roomName || roomMeta?.roomId || "â€”";
   const roundValue = state.round ?? "â€”";
+  const cardCountValue = (getWhistCardCount() || 0) + 8;
   const dealerValue = state.players[state.dealerIndex]?.name || "Unknown";
   const trumpCardHtml = state.trumpCard
     ? (() => {
@@ -758,8 +1311,16 @@ function renderStatus() {
     <table class="status-table">
       <tbody>
         <tr>
+          <td>Room</td>
+          <td>${roomValue}</td>
+        </tr>
+        <tr>
           <td>Round</td>
           <td>${roundValue}</td>
+        </tr>
+        <tr>
+          <td>Cards</td>
+          <td>${cardCountValue}</td>
         </tr>
         <tr>
           <td>Dealer</td>
@@ -784,7 +1345,8 @@ function renderStatus() {
 
 function renderPlayerStatusBoxes() {
   const boxesEl = document.getElementById("playerStatusBoxes");
-  if (!boxesEl || !state) {
+  if (!boxesEl || !state || !state.trumpCard) {
+    if (boxesEl) boxesEl.innerHTML = "";
     return;
   }
 
@@ -827,7 +1389,7 @@ function renderPlayerStatusBoxes() {
     const isLeader = (Number(player.score) || 0) === topScore;
     const isDealer = player.index === state.dealerIndex;
     const leaderIcon = isLeader ? `<span class="leader-crown-icon" title="Leader" aria-label="Leader"><i class="fa-solid fa-crown"></i></span>` : "";
-    const dealerIcon = isDealer ? `<span class="dealer-card-icon" title="Dealer" aria-label="Dealer"><i class="fa-solid fa-cards"></i></span>` : "";
+    const dealerIcon = isDealer ? `<span class="dealer-card-icon" title="Dealer" aria-label="Dealer"><i class="fa-solid fa-cube"></i></span>` : "";
 
     let cardsForPhase = [];
     if (state.brag?.started) {
@@ -982,7 +1544,7 @@ function renderScoreboard() {
     `;
   });
 
-  scoreboardEl.innerHTML = `
+  const scoreboardHtml = `
     <div class="scoreboard-table-wrapper">
       <table class="scoreboard-table">
         <thead>
@@ -1007,7 +1569,11 @@ function renderScoreboard() {
         </tfoot>
       </table>
     </div>
+    ${state?.whist?.result && state.round >= getTotalRoundsForCurrentGame()
+      ? `<div style="display:flex; justify-content:flex-end; margin-top:12px;"><button onclick="window.endGameHandler()">End Game</button></div>`
+      : ""}
   `;
+  scoreboardEl.innerHTML = scoreboardHtml;
 }
 
 function renderMyHand(hand) {
@@ -1049,14 +1615,22 @@ function renderSplitter() {
     return;
   }
 
-  if (me.assignments) {
+  if (me.assignments || me.swapSelection) {
     splitInstructionsEl.textContent = "You have already saved your hand split. Waiting for other players...";
-    const savedTargets = getAssignmentTargets();
+    const swapMode = getRobotNoBotSwapModeClient();
+    const savedTargets = swapMode
+      ? [
+          { key: "left", label: "Left Pile", color: "#D1D5DB", cards: me.swapSelection?.left || [] },
+          { key: "fixed", label: swapMode.fixedTarget === "brag" ? "Brag (Fixed)" : "Yaniv (Fixed)", color: swapMode.fixedTarget === "brag" ? "#FF8888" : "#6BA8D0", cards: me.swapSelection?.fixed || [] },
+          { key: "right", label: "Right Pile", color: "#D1D5DB", cards: me.swapSelection?.right || [] }
+        ]
+      : getAssignmentTargets().map((target) => ({ ...target, cards: me.assignments?.[target.key] || [] }));
+
     const savedPilesHtml = savedTargets
       .map((target, idx) => {
         const pileColors = ["#FF8888", "#6BA8D0", "#C896E0"];
-        const pileColor = pileColors[idx] || "#999";
-        const cards = me.assignments?.[target.key] || [];
+        const pileColor = target.color || pileColors[idx] || "#999";
+        const cards = target.cards || [];
         const cardsHtml = cards
           .map((card, index) => `<button type="button" class="split-card-button" disabled style="opacity: 1; margin: 0; z-index: ${index + 1};">${cardToText(card)}</button>`)
           .join("");
@@ -1095,12 +1669,23 @@ function renderSplitter() {
     return;
   }
 
-  const targets = getAssignmentTargets();
-  const counts = getMyAssignmentCounts();
+  const swapMode = getRobotNoBotSwapModeClient();
+  const targets = swapMode
+    ? [
+        { key: "left", label: "Left Pile", required: swapMode.equalCount, color: "#D1D5DB" },
+        { key: "fixed", label: swapMode.fixedTarget === "brag" ? "Brag (Fixed)" : "Yaniv (Fixed)", required: swapMode.fixedCount, color: swapMode.fixedTarget === "brag" ? "#FF8888" : "#6BA8D0" },
+        { key: "right", label: "Right Pile", required: swapMode.equalCount, color: "#D1D5DB" }
+      ]
+    : getAssignmentTargets();
+  const counts = {};
+  targets.forEach((target) => {
+    counts[target.key] = me.hand.filter((card) => tempAssignments[card.id] === target.key).length;
+  });
   const unassignedCards = getUnassignedCards();
 
-  splitInstructionsEl.textContent =
-    "Select cards and move them into Brag, Yaniv, and Whist.";
+  splitInstructionsEl.textContent = swapMode
+    ? `Select cards into Left / Right and ${swapMode.fixedTarget === "brag" ? "Brag" : "Yaniv"} (fixed).`
+    : "Select cards and move them into Brag, Yaniv, and Whist.";
 
   const countsHtml = targets
     .map((target) => {
@@ -1131,7 +1716,7 @@ function renderSplitter() {
   const pilesHtml = targets
     .map((target, idx) => {
       const pileColors = ["#FF8888", "#6BA8D0", "#C896E0"];
-      const pileColor = pileColors[idx] || "#999";
+      const pileColor = target.color || pileColors[idx] || "#999";
       const cardsInPile = getCardsInPile(target.key);
       const current = counts[target.key] || 0;
       const isFull = current === target.required;
@@ -1628,9 +2213,46 @@ function renderWhist() {
     const nextNominationPlayerIndex = getNextNominationPlayerIndex();
     const isMyTurnToNominate = nextNominationPlayerIndex === playerIndex;
     const totalTricks = getWhistCardCount();
+    const swapMode = getRobotNoBotSwapModeClient();
+    const isBlindRound = isBlindRoundClient();
+
     const cardsHtml = mySavedWhist.length > 0
-      ? mySavedWhist.map((card) => `<button class="split-card-button" disabled style="opacity: 1; margin: 0;">${cardToText(card)}</button>`).join("")
+      ? mySavedWhist
+          .map((card) => {
+            if (!isBlindRound) {
+              return `<button class="split-card-button" disabled style="opacity: 1; margin: 0;">${cardToText(card)}</button>`;
+            }
+            const backClass = getCardBackClass(card.backColor);
+            return `<button class="split-card-button" disabled style="opacity: 1; margin: 0;"><div class="card card-back-only ${backClass}"><div class="card-back-pattern"></div></div></button>`;
+          })
+          .join("")
       : ``;
+
+    const swapSelection = me?.swapSelection;
+    const swapSelectionHtml = swapMode && swapSelection
+      ? `
+        <div class="split-piles-area normal-layout" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;">
+          <div class="split-pile split-pile-clickable" style="background-color: rgba(209, 213, 219, 0.9); justify-content: flex-start; padding: 10px;">
+            <div class="split-pile-header-clickable"><strong>Left Pile</strong></div>
+            <div class="split-stack">
+              ${swapSelection.left.map((card) => `<button class="split-card-button" disabled style="opacity:1;margin:0;">${cardToText(card)}</button>`).join("")}
+            </div>
+          </div>
+          <div class="split-pile split-pile-clickable" style="background-color: rgba(209, 213, 219, 0.9); justify-content: flex-start; padding: 10px;">
+            <div class="split-pile-header-clickable"><strong>Right Pile</strong></div>
+            <div class="split-stack">
+              ${swapSelection.right.map((card) => `<button class="split-card-button" disabled style="opacity:1;margin:0;">${cardToText(card)}</button>`).join("")}
+            </div>
+          </div>
+          <div class="split-pile split-pile-clickable" style="background-color: ${swapMode.fixedTarget === "brag" ? "rgba(255, 136, 136, 0.9)" : "rgba(107, 168, 208, 0.9)"}; grid-column: 1 / -1; justify-content: flex-start; padding: 10px;">
+            <div class="split-pile-header-clickable"><strong>${swapMode.fixedTarget === "brag" ? "Brag (Fixed)" : "Yaniv (Fixed)"}</strong></div>
+            <div class="split-stack">
+              ${swapSelection.fixed.map((card) => `<button class="split-card-button" disabled style="opacity:1;margin:0;">${cardToText(card)}</button>`).join("")}
+            </div>
+          </div>
+        </div>
+      `
+      : "";
 
     const nominationSection = isMyTurnToNominate
       ? `
@@ -1648,14 +2270,85 @@ function renderWhist() {
       <div class="split-piles-area normal-layout" style="display: grid; grid-template-columns: 1fr; margin-top: 20px;">
         <div class="split-pile split-pile-clickable" style="background-color: rgba(200, 150, 224, 0.85); justify-content: flex-start; padding: 12px;">
           <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
-            <strong>Your Whist Hand</strong>
+            <strong>${swapMode ? "Your Split For Robot / No-bot" : (isBlindRound ? "Your Blind Hand" : "Your Whist Hand")}</strong>
           </div>
           <div class="split-stack" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
-            ${cardsHtml}
+            ${swapMode ? swapSelectionHtml : cardsHtml}
           </div>
         </div>
       </div>
       ${nominationSection}
+    `;
+    return;
+  }
+
+  if (state.whist.robotNoBotPending || state.whist.robotNoBotAwaitingContinue) {
+    const swapMode = getRobotNoBotSwapModeClient();
+    const resolvedFace = state.whist.robotNoBotCoinResult || state.whist.robotNoBotResults?.[0] || "nobot";
+    const displayFace = robotFlipAnimating ? (robotFlipFaces[0] || "nobot") : resolvedFace;
+    const coinIconHtml =
+      displayFace === "robot"
+        ? `<i class="fa-solid fa-robot"></i>`
+        : `<i class="fa-regular fa-circle"></i>`;
+
+    const flipPanelsHtml = state.players
+      .map((player, idx) => {
+        const face = state.whist.robotNoBotResults?.[idx] || displayFace;
+
+        const split = player.swapSelection || { left: [], right: [], fixed: [] };
+        const leftHtml = (split.left || []).map((card) => `<button class="split-card-button" disabled style="opacity:1;margin:0;">${cardToText(card)}</button>`).join("");
+        const rightHtml = (split.right || []).map((card) => `<button class="split-card-button" disabled style="opacity:1;margin:0;">${cardToText(card)}</button>`).join("");
+        const fixedHtml = (split.fixed || []).map((card) => `<button class="split-card-button" disabled style="opacity:1;margin:0;">${cardToText(card)}</button>`).join("");
+
+        const isResolved = !!state.whist.robotNoBotAwaitingContinue;
+        const leftTitle = !isResolved
+          ? "Left"
+          : (face === "nobot" ? "Whist" : (swapMode?.equalTarget === "brag" ? "Brag" : "Yaniv"));
+        const rightTitle = !isResolved
+          ? "Right"
+          : (face === "robot" ? "Whist" : (swapMode?.equalTarget === "brag" ? "Brag" : "Yaniv"));
+        const fixedTitle = swapMode?.fixedTarget === "brag" ? "Brag" : "Yaniv";
+
+        const leftColor = !isResolved
+          ? "rgba(209, 213, 219, 0.95)"
+          : (face === "nobot" ? "rgba(200, 150, 224, 0.9)" : (swapMode?.equalTarget === "brag" ? "rgba(255, 136, 136, 0.9)" : "rgba(107, 168, 208, 0.9)"));
+        const rightColor = !isResolved
+          ? "rgba(209, 213, 219, 0.95)"
+          : (face === "robot" ? "rgba(200, 150, 224, 0.9)" : (swapMode?.equalTarget === "brag" ? "rgba(255, 136, 136, 0.9)" : "rgba(107, 168, 208, 0.9)"));
+        const fixedColor = swapMode?.fixedTarget === "brag" ? "rgba(255, 136, 136, 0.9)" : "rgba(107, 168, 208, 0.9)";
+
+        return `
+          <div class="split-pile split-pile-clickable" style="background-color: rgba(229, 231, 235, 0.95); justify-content: flex-start; padding: 12px;">
+            <div style="font-weight: 700; margin-bottom: 8px;">${player.name}</div>
+            <div style="width:100%; margin-top:8px; display:grid; gap:8px;">
+              <div class="split-pile" style="background-color:${leftColor}; border:none; border-radius:10px; padding:8px;">
+                <div class="split-pile-header-clickable" style="margin-bottom:6px;"><strong>${leftTitle}</strong></div>
+                <div class="split-stack">${leftHtml}</div>
+              </div>
+              <div class="split-pile" style="background-color:${rightColor}; border:none; border-radius:10px; padding:8px;">
+                <div class="split-pile-header-clickable" style="margin-bottom:6px;"><strong>${rightTitle}</strong></div>
+                <div class="split-stack">${rightHtml}</div>
+              </div>
+              <div class="split-pile" style="background-color:${fixedColor}; border:none; border-radius:10px; padding:8px;">
+                <div class="split-pile-header-clickable" style="margin-bottom:6px;"><strong>${fixedTitle}</strong></div>
+                <div class="split-stack">${fixedHtml}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    whistTableEl.innerHTML = `
+      <div style="width: 66px; height: 66px; border-radius: 999px; border: 2px solid #9ca3af; display:flex; align-items:center; justify-content:center; font-size: 26px; margin-bottom: 8px;">
+        ${coinIconHtml}
+      </div>
+      <div class="phase-results">${flipPanelsHtml}</div>
+      <div style="display:flex; justify-content:flex-end; margin-top: 12px;">
+        ${state.whist.robotNoBotPending
+          ? `<button ${robotFlipAnimating ? "disabled" : ""} onclick="window.resolveRobotNoBotHandler()">${robotFlipAnimating ? "Flipping..." : "Flip"}</button>`
+          : `<button onclick="window.continueAfterRobotNoBotHandler()">Continue</button>`}
+      </div>
     `;
     return;
   }
@@ -1944,6 +2637,14 @@ window.continueToWhistHandler = continueToWhistHandler;
 window.nextRoundHandler = nextRoundHandler; 
 window.shouldShowKnockGuru = shouldShowKnockGuru;
 window.continueToYanivHandler = continueToYanivHandler;
+window.resolveRobotNoBotHandler = resolveRobotNoBotHandler;
+window.continueAfterRobotNoBotHandler = continueAfterRobotNoBotHandler;
+window.createRoomHandler = createRoomHandler;
+window.joinRoomHandler = joinRoomHandler;
+window.endGameHandler = endGameHandler;
+window.leaveRoomHandler = leaveRoomHandler;
+window.endRoomHandler = endRoomHandler;
+window.startGameHandler = startGameHandler;
 
 
 

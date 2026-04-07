@@ -21,28 +21,39 @@
     <main class="game-layout">
   <aside class="game-sidebar">
     <div class="panel sidebar-panel">
-      <section class="status-bar-panel" id="statusPanel">
-   
+      <div class="sidebar-tab-buttons">
+        <button id="sidebarTabDetailsBtn" class="active" title="Details" aria-label="Details"><i class="fa-solid fa-circle-info"></i></button>
+        <button id="sidebarTabLeaderboardBtn" title="Leaderboard" aria-label="Leaderboard"><i class="fa-solid fa-trophy"></i></button>
+        <button id="sidebarTabChatBtn" title="Chat" aria-label="Chat"><i class="fa-solid fa-comments"></i></button>
+      </div>
 
-        <div class="button-row compact-status-buttons">
-          <button id="showScoreboardBtn">Show Scoreboard</button>
-          <button id="newGameBtn">New Game</button>
-        </div>
-     <div class="status-info">
-          <div id="status">Game not started yet.</div>
-        </div>
+      <section id="sidebarDetailsTab" class="sidebar-tab-panel active">
+        <section class="status-bar-panel" id="statusPanel">
+          <div class="button-row compact-status-buttons">
+            <button id="showScoreboardBtn">Show Scoreboard</button>
+            <button id="jumpRoundBtn">Jump Round</button>
+            <button id="endGameBtn">End Game</button>
+          </div>
+          <div class="status-info">
+            <div id="status">Game not started yet.</div>
+          </div>
+        </section>
+
       </section>
 
-      <section class="sidebar-subpanel" id="leaderboardPanel">
-        <h2>Leaderboard</h2>
+      <section id="sidebarLeaderboardTab" class="sidebar-tab-panel">
         <div id="leaderboard"></div>
+        <div id="players"></div>
       </section>
 
-
-
-
-
-<div id="players"></div>
+      <section id="sidebarChatTab" class="sidebar-tab-panel">
+        <div id="chatLog" class="chat-log"></div>
+        <div class="chat-composer">
+          <textarea id="chatInput" rows="2" placeholder="Type a message..."></textarea>
+          <div class="chat-send-row">
+            <button id="sendChatBtn">Send</button>
+          </div>
+        </div>
       </section>
     </div>
   </aside>
@@ -51,8 +62,7 @@
     <div id="playerStatusBoxes" class="player-status-boxes"></div>
 
     <section class="panel" data-tab="waiting">
-      <h2>Waiting for Game to Start</h2>
-      <p>The game hasn't started yet. Enter your name below, then click "Save Name" and "Start Test Game".</p>
+      <h2>Lobby</h2>
       <div class="name-entry">
         <input id="nameInput" type="text" placeholder="Your name" />
         <button id="saveNameBtn">Save Name</button>
