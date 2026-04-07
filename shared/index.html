@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NSYBWB</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app"></div>
+  <div class="app">
+    <header>
+      <h1>NSYBWB</h1>
+      <p>Nomination Super Yaniv Basketball Whist Brag</p>
+    </header>
+
+    <main class="game-layout">
+  <aside class="game-sidebar">
+    <div class="panel sidebar-panel">
+      <section class="status-bar-panel" id="statusPanel">
+   
+
+        <div class="button-row compact-status-buttons">
+          <button id="showScoreboardBtn">Show Scoreboard</button>
+          <button id="newGameBtn">New Game</button>
+        </div>
+     <div class="status-info">
+          <div id="status">Game not started yet.</div>
+        </div>
+      </section>
+
+      <section class="sidebar-subpanel" id="leaderboardPanel">
+        <h2>Leaderboard</h2>
+        <div id="leaderboard"></div>
+      </section>
+
+
+
+
+
+<div id="players"></div>
+      </section>
+    </div>
+  </aside>
+
+  <div class="game-main" >
+    <div id="playerStatusBoxes" class="player-status-boxes"></div>
+
+    <section class="panel" data-tab="waiting">
+      <h2>Waiting for Game to Start</h2>
+      <p>The game hasn't started yet. Enter your name below, then click "Save Name" and "Start Test Game".</p>
+      <div class="name-entry">
+        <input id="nameInput" type="text" placeholder="Your name" />
+        <button id="saveNameBtn">Save Name</button>
+      </div>
+      <button id="startGameBtn">Start Test Game</button>
+      <div id="waitingContent"></div>
+    </section>
+
+    <section class="panel" data-tab="splitter">
+      <div class="panel-header-with-tooltip">
+        <h2 style="display:none;">Hand Splitter</h2>
+        <div class="tooltip-icon" title="Split your hand into Basketball Brag, Yaniv, and Nomination Whist piles">?</div>
+      </div>
+      <p id="splitInstructions" style="display:none;"></p>
+      <div id="splitter"></div>
+    </section>
+
+    <section class="panel" data-tab="brag">
+      <div class="panel-header-with-tooltip">
+        <h2 style="display:none;">Basketball Brag</h2>
+        <div class="tooltip-icon" title="Players compete to have the best 3-card hand">?</div>
+      </div>
+      <p id="bragStatus">Brag not started yet.</p>
+      <div id="bragControls"></div>
+      <div id="bragTable"></div>
+    </section>
+
+    <section class="panel" data-tab="brag-results">
+      <div class="panel-header-with-tooltip">
+        <div class="sort-buttons-group">
+          <button type="button" disabled onclick="window.sortCards(1)">Sort Suit</button>
+          <button type="button" disabled onclick="window.sortCards(2)">Sort Number</button>
+        </div>
+        <h2 style="display:none;">Brag Results</h2>
+        <div class="tooltip-icon" title="Results from the Brag round">?</div>
+      </div>
+      <div id="bragResultsContent"></div>
+      <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
+        <button id="continueToYanivFromBragBtn" onclick="window.continueToYanivHandler()">Continue to Yaniv</button>
+      </div>
+    </section>
+
+    <section class="panel" data-tab="yaniv">
+      <div class="panel-header-with-tooltip">
+        <h2 style="display:none;">Yaniv</h2>
+        <div class="tooltip-icon" title="Draw and discard cards to get your hand total to 5 or less">?</div>
+      </div>
+      <div id="yanivControls"></div>
+      <div id="yanivTable"></div>
+    </section>
+
+    <section class="panel" data-tab="whist">
+      <div class="panel-header-with-tooltip">
+        <h2 style="display:none;">Nomination Whist</h2>
+        <div class="tooltip-icon" title="Nominate tricks and win exactly that many">?</div>
+      </div>
+      <div id="whistTable"></div>
+    </section>
+
+    <section class="panel" data-tab="scoreboard">
+      <div class="panel-header-row">
+        <h2>Full Scoreboard</h2>
+        <button id="returnToGameBtn">Back to Game</button>
+      </div>
+      <div id="scoreboard"></div>
+    </section>
+  </div>
+</main>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="script.js"></script>
+</body>
+</html>
