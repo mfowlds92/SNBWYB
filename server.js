@@ -250,6 +250,40 @@ function getStateByteSize(value) {
   }
 }
 
+function countNestedCards(value) {
+  if (!value) return 0;
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + countNestedCards(item), 0);
+  }
+  if (typeof value === "object") {
+    if (value.rank && value.suit) return 1;
+    return Object.values(value).reduce((sum, item) => sum + countNestedCards(item), 0);
+  }
+  return 0;
+}
+
+function getRoomDebugMetrics(room) {
+  const roomState = room?.state || {};
+  const roundHistory = Array.isArray(roomState.roundHistory) ? roomState.roundHistory : [];
+  const currentRoundSummary = roomState.currentRoundSummary || null;
+  const allRoomChats = Object.values(rooms).reduce((sum, entry) => sum + (entry.chatMessages?.length || 0), 0);
+
+  return {
+    roomChatMessages: room.chatMessages?.length || 0,
+    totalChatMessages: allRoomChats,
+    roomCount: Object.keys(rooms).length,
+    connectedSockets: io.sockets.sockets.size,
+    wonTrickPileCards: countNestedCards(roomState.whist?.wonTrickPiles || []),
+    wonTricksByPlayerCards: countNestedCards(roomState.whist?.wonTricksByPlayer || []),
+    roundHistoryCards: countNestedCards(roundHistory),
+    currentSummaryCards: countNestedCards(currentRoundSummary),
+    whistTrickHistoryEntries: roundHistory.reduce(
+      (sum, summary) => sum + (summary?.whistTrickHistory?.length || 0),
+      0
+    ) + (currentRoundSummary?.whistTrickHistory?.length || 0)
+  };
+}
+
 function sendStateToRoom(roomId) {
   const room = rooms[roomId];
   if (!room || !room.state) return;
@@ -257,6 +291,7 @@ function sendStateToRoom(roomId) {
   const processMemory = process.memoryUsage();
   const roomStateBytes = getStateByteSize(room.state);
   const roundHistoryBytes = getStateByteSize(room.state.roundHistory || []);
+  const roomDebug = getRoomDebugMetrics(room);
 
   room.players.forEach((socketId, playerIndex) => {
     const socket = io.sockets.sockets.get(socketId);
@@ -273,7 +308,16 @@ function sendStateToRoom(roomId) {
       externalBytes: processMemory.external,
       arrayBuffersBytes: processMemory.arrayBuffers || 0,
       playerCount: room.playersList.length,
-      round: room.state.round || 0
+      round: room.state.round || 0,
+      roomChatMessages: roomDebug.roomChatMessages,
+      totalChatMessages: roomDebug.totalChatMessages,
+      roomCount: roomDebug.roomCount,
+      connectedSockets: roomDebug.connectedSockets,
+      wonTrickPileCards: roomDebug.wonTrickPileCards,
+      wonTricksByPlayerCards: roomDebug.wonTricksByPlayerCards,
+      roundHistoryCards: roomDebug.roundHistoryCards,
+      currentSummaryCards: roomDebug.currentSummaryCards,
+      whistTrickHistoryEntries: roomDebug.whistTrickHistoryEntries
     };
     socket.emit("playerIndex", playerIndex);
     socket.emit("stateUpdate", safeState);
