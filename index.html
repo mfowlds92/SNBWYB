@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" referrerpolicy="no-referrer" />
-  <link rel="stylesheet" href="style.css?v=2" />
+  <link rel="stylesheet" href="style.css?v=3" />
 </head>
 <body>
 <div id="app"></div>
@@ -19,48 +19,7 @@
     </header>
 
     <main class="game-layout">
-  <aside class="game-sidebar">
-    <div class="panel sidebar-panel">
-      <div class="sidebar-tab-buttons">
-        <button id="sidebarTabDetailsBtn" class="active" title="Details" aria-label="Details"><i class="fa-solid fa-circle-info"></i></button>
-        <button id="sidebarTabLeaderboardBtn" title="Leaderboard" aria-label="Leaderboard"><i class="fa-solid fa-trophy"></i></button>
-        <button id="sidebarTabChatBtn" title="Chat" aria-label="Chat"><i class="fa-solid fa-comments"></i></button>
-      </div>
-
-      <section id="sidebarDetailsTab" class="sidebar-tab-panel active">
-        <section class="status-bar-panel" id="statusPanel">
-          <div class="button-row compact-status-buttons">
-            <button id="showScoreboardBtn">Show Scoreboard</button>
-            <button id="jumpRoundBtn">Jump Round</button>
-            <button id="endGameBtn">End Game</button>
-          </div>
-          <div class="status-info">
-            <div id="status">Game not started yet.</div>
-          </div>
-        </section>
-
-      </section>
-
-      <section id="sidebarLeaderboardTab" class="sidebar-tab-panel">
-        <div id="leaderboard"></div>
-        <div id="players"></div>
-      </section>
-
-      <section id="sidebarChatTab" class="sidebar-tab-panel">
-        <div id="chatLog" class="chat-log"></div>
-        <div class="chat-composer">
-          <textarea id="chatInput" rows="2" placeholder="Type a message..."></textarea>
-          <div class="chat-send-row">
-            <button id="sendChatBtn">Send</button>
-          </div>
-        </div>
-      </section>
-
-      <div id="sidebarTrumpContainer"></div>
-    </div>
-  </aside>
-
-  <div class="game-main" >
+  <div class="game-main">
     <div id="playerStatusBoxes" class="player-status-boxes"></div>
 
     <section class="panel" data-tab="waiting">
@@ -133,9 +92,47 @@
       <div id="scoreboard"></div>
     </section>
   </div>
+
+  <aside class="game-sidebar">
+    <div class="panel sidebar-panel">
+      <div class="sidebar-tab-buttons">
+        <button id="sidebarTabDetailsBtn" class="active" title="Details" aria-label="Details"><i class="fa-solid fa-circle-info"></i></button>
+        <button id="sidebarTabLeaderboardBtn" title="Leaderboard" aria-label="Leaderboard"><i class="fa-solid fa-trophy"></i></button>
+        <button id="sidebarTabChatBtn" title="Chat" aria-label="Chat"><i class="fa-solid fa-comments"></i></button>
+      </div>
+
+      <section id="sidebarDetailsTab" class="sidebar-tab-panel active">
+        <section class="status-bar-panel" id="statusPanel">
+          <div class="button-row compact-status-buttons">
+            <button id="showScoreboardBtn">Show Scoreboard</button>
+            <button id="jumpRoundBtn">Jump Round</button>
+            <button id="endGameBtn">End Game</button>
+          </div>
+          <div class="status-info">
+            <div id="status">Game not started yet.</div>
+          </div>
+        </section>
+      </section>
+
+      <section id="sidebarLeaderboardTab" class="sidebar-tab-panel">
+        <div id="leaderboard"></div>
+        <div id="players"></div>
+      </section>
+
+      <section id="sidebarChatTab" class="sidebar-tab-panel">
+        <div id="chatLog" class="chat-log"></div>
+        <div class="chat-composer">
+          <textarea id="chatInput" rows="2" placeholder="Type a message..."></textarea>
+          <div class="chat-send-row">
+            <button id="sendChatBtn">Send</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </aside>
 </main>
   </div>
-  <script src="/socket.io/socket.io.js?v=2"></script>
-  <script type="module" src="script.js?v=2"></script>
+  <script src="/socket.io/socket.io.js?v=3"></script>
+  <script type="module" src="script.js?v=3"></script>
 </body>
 </html>

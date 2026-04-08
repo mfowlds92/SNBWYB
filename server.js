@@ -90,16 +90,6 @@ function getRoomSummaries() {
 function emitLobbyUpdate() {
   const lobbyRooms = getRoomSummaries();
   io.to(LOBBY_CHANNEL).emit("lobbyUpdate", { rooms: lobbyRooms });
-  console.log(
-    `[LOBBY][emitLobbyUpdate] rooms=${lobbyRooms.length}`,
-    lobbyRooms.map((room) => ({
-      roomId: room.roomId,
-      roomName: room.roomName,
-      playerCount: room.playerCount,
-      playersList: room.playersList
-    }))
-  );
-  logLobbyMembers("emitLobbyUpdate");
 }
 
 function isSocketInLobby(socket) {
@@ -117,21 +107,6 @@ function syncSocketLobbyMembership(socket) {
   } else {
     socket.leave(LOBBY_CHANNEL);
   }
-}
-
-function logLobbyMembers(context = "") {
-  const lobbyRoom = io.sockets.adapter.rooms.get(LOBBY_CHANNEL);
-  const socketIds = lobbyRoom ? Array.from(lobbyRoom) : [];
-  const members = socketIds.map((socketId) => {
-    const s = io.sockets.sockets.get(socketId);
-    return {
-      socketId,
-      playerId: s?.data?.playerId || null,
-      playerName: s?.data?.playerName || null,
-      currentRoomId: s?.data?.currentRoomId || null
-    };
-  });
-  console.log(`[LOBBY][${context}] members=${members.length}`, members);
 }
 
 function getPlayerIndexBySocket(room, socket) {
@@ -348,8 +323,6 @@ function startBragRoundIfReady(state) {
 }
 
 io.on("connection", (socket) => {
-  console.log("Player connected:", socket.id);
-
   socket.on("initSession", ({ playerId, playerName, currentRoomId }) => {
     const resolvedPlayerId = playerId || `p_${Math.random().toString(36).slice(2, 10)}`;
     socket.data.playerId = resolvedPlayerId;
@@ -1033,6 +1006,4 @@ socket.on("chooseKnockOrGuru", ({ roomId, choice }) => {
 
 
 
-server.listen(3000, () =>
-  console.log("Server running on http://localhost:3000")
-);
+server.listen(3000);

@@ -90,6 +90,9 @@ yaniv: {
   currentPlayerIndex: null,
   leadSuit: null,
   currentTrick: [],
+  lastCompletedTrick: [],
+  lastCompletedTrickWinnerIndex: null,
+  lastCompletedTrickEventId: 0,
   tricksWon: playerNames.map(() => 0),
   lastWonTrickByPlayer: playerNames.map(() => []),
   wonTricksByPlayer: playerNames.map(() => []),
@@ -132,7 +135,8 @@ export function createCurrentRoundSummary(state) {
     })),
     bragResults: [],
     yanivResult: null,
-    whistResults: []
+    whistResults: [],
+    whistTrickHistory: []
   };
 }
 
@@ -864,10 +868,16 @@ function advanceWhistTurn(state) {
   const order = getPlayerOrderFromLeftOfDealer(state);
 
   if (state.whist.currentTrick.length === state.players.length) {
+    const completedTrick = [...state.whist.currentTrick];
+    const leadSuit = getLeadSuitFromCurrentTrick(completedTrick);
+    const trumpSuit = getActualTrumpSuit(state);
     const winner = getWhistTrickWinner(state, state.whist.currentTrick);
 
     if (winner) {
       state.whist.trickWinnerIndex = winner.playerIndex;
+      state.whist.lastCompletedTrick = completedTrick;
+      state.whist.lastCompletedTrickWinnerIndex = winner.playerIndex;
+      state.whist.lastCompletedTrickEventId = (state.whist.lastCompletedTrickEventId || 0) + 1;
       state.whist.tricksWon[winner.playerIndex] += 1;
       const wonCards = state.whist.currentTrick.map((entry) => entry.card);
       state.whist.lastWonTrickByPlayer[winner.playerIndex] = wonCards;
@@ -882,7 +892,30 @@ function advanceWhistTurn(state) {
           cards: wonCards
         }
       ];
+      if (state.currentRoundSummary) {
+        state.currentRoundSummary.whistTrickHistory = [
+          ...(state.currentRoundSummary.whistTrickHistory || []),
+          {
+            trickNumber: (state.currentRoundSummary.whistTrickHistory?.length || 0) + 1,
+            trump: trumpSuit,
+            leadSuit,
+            winnerPlayerIndex: winner.playerIndex,
+            winnerPlayerName: state.players[winner.playerIndex]?.name || `Player ${winner.playerIndex + 1}`,
+            cards: completedTrick.map((entry) => ({
+              playerIndex: entry.playerIndex,
+              playerName: state.players[entry.playerIndex]?.name || `Player ${entry.playerIndex + 1}`,
+              rank: entry.card.rank,
+              suit: entry.card.suit,
+              backColor: entry.card.backColor
+            }))
+          }
+        ];
+      }
       state.whist.currentPlayerIndex = winner.playerIndex;
+    } else {
+      state.whist.lastCompletedTrick = completedTrick;
+      state.whist.lastCompletedTrickWinnerIndex = null;
+      state.whist.lastCompletedTrickEventId = (state.whist.lastCompletedTrickEventId || 0) + 1;
     }
 
     state.whist.currentTrick = [];
@@ -1428,6 +1461,9 @@ newState.brag = {
   newState.whist.currentPlayerIndex = null;
   newState.whist.leadSuit = null;
   newState.whist.currentTrick = [];
+  newState.whist.lastCompletedTrick = [];
+  newState.whist.lastCompletedTrickWinnerIndex = null;
+  newState.whist.lastCompletedTrickEventId = 0;
   newState.whist.tricksWon = newState.players.map(() => 0);
   newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
   newState.whist.wonTricksByPlayer = newState.players.map(() => []);
@@ -1987,6 +2023,9 @@ export function callYaniv(state, playerIndex) {
   newState.whist.currentPlayerIndex = getPlayerOrderFromLeftOfDealer(newState)[0] ?? 0;
   newState.whist.leadSuit = null;
   newState.whist.currentTrick = [];
+  newState.whist.lastCompletedTrick = [];
+  newState.whist.lastCompletedTrickWinnerIndex = null;
+  newState.whist.lastCompletedTrickEventId = 0;
   newState.whist.trickWinnerIndex = null;
 
   return { state: newState };
@@ -2053,6 +2092,9 @@ newState.brag = {
   newState.whist.currentPlayerIndex = null;
   newState.whist.leadSuit = null;
   newState.whist.currentTrick = [];
+  newState.whist.lastCompletedTrick = [];
+  newState.whist.lastCompletedTrickWinnerIndex = null;
+  newState.whist.lastCompletedTrickEventId = 0;
   newState.whist.tricksWon = newState.players.map(() => 0);
   newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
   newState.whist.wonTricksByPlayer = newState.players.map(() => []);
@@ -2139,6 +2181,9 @@ export function jumpToRound(state, targetRound) {
   newState.whist.currentPlayerIndex = null;
   newState.whist.leadSuit = null;
   newState.whist.currentTrick = [];
+  newState.whist.lastCompletedTrick = [];
+  newState.whist.lastCompletedTrickWinnerIndex = null;
+  newState.whist.lastCompletedTrickEventId = 0;
   newState.whist.tricksWon = newState.players.map(() => 0);
   newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
   newState.whist.wonTricksByPlayer = newState.players.map(() => []);

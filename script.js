@@ -31,23 +31,14 @@ let lastSeenYanivSlamEventId = 0;
 let activeBragKnockFlash = false;
 let activeBragKnockFlashTimer = null;
 let lastSeenBragKnockEventId = 0;
+let activeWhistTrickReveal = false;
+let activeWhistTrickRevealTimer = null;
+let lastSeenWhistTrickRevealEventId = 0;
 let nameInputDirty = false;
 let lastLobbySyncAt = 0;
 let lobbySyncIntervalId = null;
 let activeSidebarTab = "details";
 let chatMessages = [];
-
-function debugLogRooms(source, payload = {}) {
-  const snapshot = {
-    source,
-    roomId,
-    playerId,
-    lobbyRooms: lobbyRooms || [],
-    roomMeta: roomMeta || null,
-    ...payload
-  };
-  console.log("[NSYBWB][rooms]", snapshot);
-}
 
 function requestLobbyRoomsIfNeeded(force = false) {
   const now = Date.now();
@@ -162,14 +153,12 @@ socket.on("sessionReady", (payload) => {
     localStorage.removeItem("nsybwb_room_id");
   }
 
-  debugLogRooms("sessionReady", { payload });
   requestLobbyRoomsIfNeeded(true);
   render();
 });
 
 socket.on("lobbyUpdate", ({ rooms }) => {
   lobbyRooms = rooms || [];
-  debugLogRooms("lobbyUpdate", { rooms });
   render();
 });
 
@@ -179,7 +168,6 @@ socket.on("roomJoined", ({ roomId: joinedRoomId, playerIndex: joinedPlayerIndex,
   roomMeta = { roomId: joinedRoomId, ...meta };
   chatMessages = [];
   localStorage.setItem("nsybwb_room_id", roomId);
-  debugLogRooms("roomJoined", { joinedRoomId, joinedPlayerIndex, meta });
   requestLobbyRoomsIfNeeded(true);
   renderChat();
   render();
@@ -187,7 +175,6 @@ socket.on("roomJoined", ({ roomId: joinedRoomId, playerIndex: joinedPlayerIndex,
 
 socket.on("roomMeta", (meta) => {
   roomMeta = meta;
-  debugLogRooms("roomMeta", { meta });
   requestLobbyRoomsIfNeeded(true);
   render();
 });
@@ -230,7 +217,6 @@ socket.on("chatMessage", ({ roomId: incomingRoomId, message }) => {
 
 socket.on("stateUpdate", (newState) => {
   state = newState;
-console.log(state);
   applyActiveSortToCurrentPhase();
   const myPlayer = playerIndex !== null ? state.players[playerIndex] : null;
   const alreadySaved = !!myPlayer?.assignments || !!myPlayer?.swapSelection;
@@ -270,6 +256,9 @@ console.log(state);
   }
 
   const drawEventId = state?.yaniv?.lastDrawAction?.eventId || 0;
+  if (drawEventId < lastSeenYanivDrawEventId) {
+    lastSeenYanivDrawEventId = 0;
+  }
   if (drawEventId > lastSeenYanivDrawEventId) {
     lastSeenYanivDrawEventId = drawEventId;
     activeYanivDrawHighlightSource = state.yaniv.lastDrawAction?.source || null;
@@ -284,6 +273,9 @@ console.log(state);
   }
 
   const slamEventId = state?.yaniv?.lastSlamAction?.eventId || 0;
+  if (slamEventId < lastSeenYanivSlamEventId) {
+    lastSeenYanivSlamEventId = 0;
+  }
   if (slamEventId > lastSeenYanivSlamEventId) {
     lastSeenYanivSlamEventId = slamEventId;
     activeYanivSlamFlash = true;
@@ -298,6 +290,9 @@ console.log(state);
   }
 
   const bragKnockEventId = state?.brag?.lastKnockAction?.eventId || 0;
+  if (bragKnockEventId < lastSeenBragKnockEventId) {
+    lastSeenBragKnockEventId = 0;
+  }
   if (bragKnockEventId > lastSeenBragKnockEventId) {
     lastSeenBragKnockEventId = bragKnockEventId;
     activeBragKnockFlash = true;
@@ -311,10 +306,33 @@ console.log(state);
     }, 2000);
   }
 
+  const whistTrickRevealEventId = state?.whist?.lastCompletedTrickEventId || 0;
+  if (whistTrickRevealEventId < lastSeenWhistTrickRevealEventId) {
+    lastSeenWhistTrickRevealEventId = 0;
+  }
+  if (whistTrickRevealEventId > lastSeenWhistTrickRevealEventId) {
+    lastSeenWhistTrickRevealEventId = whistTrickRevealEventId;
+    activeWhistTrickReveal = true;
+    if (activeWhistTrickRevealTimer) {
+      clearTimeout(activeWhistTrickRevealTimer);
+    }
+    activeWhistTrickRevealTimer = setTimeout(() => {
+      activeWhistTrickReveal = false;
+      activeWhistTrickRevealTimer = null;
+      render();
+    }, 2000);
+  }
+
   render();
 });
 
 socket.on("errorMessage", (message) => {
+  const ignoredMessages = new Set([
+    "Cannot slam this card",
+    "Only the slam owner can slam",
+    "Robot/No-bot is not active for this round"
+  ]);
+  if (ignoredMessages.has(message)) return;
   alert(message);
 });
 
@@ -884,7 +902,7 @@ function nextRoundHandler() {
     }
   }
 
-  activeTabOverride = "scoreboard";
+  activeTabOverride = null;
   socket.emit("nextRound", roomId);
 }
 
@@ -1035,7 +1053,6 @@ function startYanivHandler() {
 }
 
 function continueToYanivHandler() {
-  console.log("continueToYanivHandler called", roomId);
   socket.emit("startYaniv", roomId);
 }
 
@@ -1246,7 +1263,6 @@ function render() {
   updateSidebarVisibility();
 
   renderStatus();
-  renderSidebarTrump();
   updateStartGameButtonState();
   renderMyPlayerInfo();
   renderNameInput();
@@ -1342,6 +1358,70 @@ function buildTrumpCardHtml() {
   `;
 }
 
+function buildPanelHeaderMetaHtml(tooltipText) {
+  const mobileTrumpHtml = state?.trumpCard
+    ? `<div class="panel-mobile-trump">${buildTrumpCardHtml()}</div>`
+    : "";
+
+  return `
+    <div class="panel-header-meta">
+      <div class="tooltip-icon" title="${tooltipText}">?</div>
+      ${mobileTrumpHtml}
+    </div>
+  `;
+}
+
+function getRoundSummaryForCurrentWhistResults() {
+  const history = Array.isArray(state?.roundHistory) ? state.roundHistory : [];
+  if (!history.length) return null;
+  return history[history.length - 1] || null;
+}
+
+function renderWhistTrickHistory(roundSummary) {
+  if (!roundSummary || !Array.isArray(roundSummary.whistTrickHistory) || !roundSummary.whistTrickHistory.length) {
+    return "";
+  }
+
+  const suitIconMap = {
+    Hearts: "&hearts;",
+    Diamonds: "&diams;",
+    Clubs: "&clubs;",
+    Spades: "&spades;"
+  };
+
+  const trickRowsHtml = roundSummary.whistTrickHistory
+    .map((trick) => {
+      const trumpDisplay = trick.trump ? (suitIconMap[trick.trump] || trick.trump) : "-";
+      const leadDisplay = trick.leadSuit ? (suitIconMap[trick.leadSuit] || trick.leadSuit) : "-";
+      const cardsDisplay = (trick.cards || [])
+        .map((entry) => {
+          const suit = suitIconMap[entry.suit] || entry.suit || "";
+          return `<span class="whist-trick-history-card">${entry.playerName}: ${entry.rank}${suit}</span>`;
+        })
+        .join("");
+
+      return `
+        <div class="whist-trick-history-row">
+          <div class="whist-trick-history-meta">
+            <strong>Trick ${trick.trickNumber}</strong>
+            <span>Trump ${trumpDisplay}</span>
+            <span>Lead ${leadDisplay}</span>
+            <span>Winner ${trick.winnerPlayerName}</span>
+          </div>
+          <div class="whist-trick-history-cards">${cardsDisplay}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="whist-trick-history">
+      <div class="whist-trick-history-title">Whist Trick Log</div>
+      ${trickRowsHtml}
+    </div>
+  `;
+}
+
 
 
 function renderStatus() {
@@ -1421,20 +1501,6 @@ function renderStatus() {
   `;
 }
 
-function renderSidebarTrump() {
-  const trumpEl = document.getElementById("sidebarTrumpContainer");
-  if (!trumpEl) return;
-
-  if (!state?.trumpCard) {
-    trumpEl.innerHTML = "";
-    return;
-  }
-
-  trumpEl.innerHTML = `
-    <div class="card-row trump-card-row">${buildTrumpCardHtml()}</div>
-  `;
-}
-
 function renderPlayerStatusBoxes() {
   const boxesEl = document.getElementById("playerStatusBoxes");
   if (!boxesEl || !state || !state.trumpCard) {
@@ -1459,9 +1525,9 @@ function renderPlayerStatusBoxes() {
     }
   }
 
-  const sortedPlayers = state.players
-    .map((player, index) => ({ ...player, index }))
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  const orderedPlayerIndexes = getPlayerOrderFromLeftOfDealer();
+  const sortedPlayers = orderedPlayerIndexes
+    .map((index) => ({ ...state.players[index], index }));
   const topScore = Math.max(...state.players.map((player) => Number(player.score) || 0));
 
   boxesEl.innerHTML = sortedPlayers.map((player) => {
@@ -1874,7 +1940,7 @@ function renderSplitter() {
     panelHeaderEl.innerHTML = `
       ${renderSortToggle(false)}
       <h2 style="display:none;">Hand Splitter</h2>
-      <div class="tooltip-icon" title="Split your hand into Brag, Yaniv, and Whist piles">?</div>
+      ${buildPanelHeaderMetaHtml("Split your hand into Brag, Yaniv, and Whist piles")}
     `;
   }
 
@@ -1945,7 +2011,7 @@ function renderBrag() {
     panelHeaderEl.innerHTML = `
       ${renderSortToggle(false)}
       <h2 style="display:none;">Brag</h2>
-      <div class="tooltip-icon" title="Players compete to have the best 3-card hand">?</div>
+      ${buildPanelHeaderMetaHtml("Players compete to have the best 3-card hand")}
     `;
   }
 
@@ -2010,11 +2076,9 @@ function renderBrag() {
         class="split-pile split-pile-clickable ${bragBoardHighlightClass}" 
         style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px;"
       >
-        ${bragBoardLabel ? `
-          <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
-            <strong class="${bragBoardLabelClass}">${bragBoardLabel}</strong>
-          </div>
-        ` : ""}
+        <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
+          <strong class="${bragBoardLabelClass}">${bragBoardLabel || "Table Cards"}</strong>
+        </div>
         <div class="split-stack" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
           ${communityHtml}
         </div>
@@ -2060,6 +2124,15 @@ function renderBrag() {
 function renderBragResults() {
   const bragResultsEl = document.getElementById("bragResultsContent");
   if (!bragResultsEl || !state) return;
+
+  const panelHeaderEl = document.querySelector('.panel[data-tab="brag-results"] .panel-header-with-tooltip');
+  if (panelHeaderEl) {
+    panelHeaderEl.innerHTML = `
+      ${renderSortToggle(true)}
+      <h2 style="display:none;">Brag Results</h2>
+      ${buildPanelHeaderMetaHtml("Players compete to have the best 3-card hand")}
+    `;
+  }
 
   if (!state.brag.results || state.brag.results.length === 0) {
     bragResultsEl.innerHTML = "";
@@ -2124,7 +2197,7 @@ function renderYaniv() {
     panelHeaderEl.innerHTML = `
       ${renderSortToggle(isYanivResultsView)}
       <h2 style="display:none;">Yaniv</h2>
-      <div class="tooltip-icon" title="Draw and discard cards to get your hand total to 5 or less">?</div>
+      ${buildPanelHeaderMetaHtml("Draw and discard cards to get your hand total to 5 or less")}
     `;
   }
 
@@ -2306,7 +2379,7 @@ function renderWhist() {
     panelHeaderEl.innerHTML = `
       ${renderSortToggle(isWhistResultsView)}
       <h2 style="display:none;">Whist</h2>
-      <div class="tooltip-icon" title="Nominate tricks and win exactly that many">?</div>
+      ${buildPanelHeaderMetaHtml("Nominate tricks and win exactly that many")}
     `;
   }
 
@@ -2382,7 +2455,7 @@ function renderWhist() {
         <div style="margin-top: 16px; padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 8px;">
           <strong>Your Nomination</strong>
           <div class="action-row" style="margin-top: 8px;">
-            <input id="nominationInput" type="number" min="0" max="${totalTricks}" value="0" style="width: 100px; padding: 8px; font-size: 14px;" />
+            <input id="nominationInput" type="number" min="0" max="${totalTricks}" style="width: 100px; padding: 8px; font-size: 14px;" />
             <button onclick="window.saveNomination()">Save Nomination</button>
           </div>
         </div>
@@ -2505,6 +2578,7 @@ function renderWhist() {
   };
 
   if (!state.whist.started && state.whist.result) {
+    const roundSummary = getRoundSummaryForCurrentWhistResults();
     const resultsHtml = state.whist.result.results
       .map((result) => {
         return `
@@ -2524,6 +2598,7 @@ function renderWhist() {
 
     whistTableEl.innerHTML = `
       <div class="phase-results">${resultsHtml}</div>
+      ${renderWhistTrickHistory(roundSummary)}
       ${renderWonTrickPilesSection()}
       <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
         <button id="continueToNextRoundBtn" onclick="window.nextRoundHandler()">Next Round</button>
@@ -2560,9 +2635,15 @@ function renderWhist() {
         .join("")
     : `<div>No Whist cards left</div>`;
 
+  const revealTrickEntries = activeWhistTrickReveal
+    ? (state.whist.lastCompletedTrick || [])
+    : (state.whist.currentTrick || []);
+  const whistRevealWinnerName = activeWhistTrickReveal && state.whist.lastCompletedTrickWinnerIndex !== null
+    ? (state.players[state.whist.lastCompletedTrickWinnerIndex]?.name || "Unknown")
+    : "";
   const currentTrickCardsHtml =
-    state.whist.currentTrick.length > 0
-      ? state.whist.currentTrick
+    revealTrickEntries.length > 0
+      ? revealTrickEntries
           .map((entry) => {
             const trickPlayerName = state.players[entry.playerIndex]?.name || `Player ${entry.playerIndex + 1}`;
             return `
@@ -2577,7 +2658,12 @@ function renderWhist() {
 
   whistTableEl.innerHTML = `
     <div class="whist-info-box">
-      <div class="split-pile split-pile-clickable whist-trick-pile" style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px;">
+      <div class="split-pile split-pile-clickable whist-trick-pile ${activeWhistTrickReveal ? "whist-trick-reveal" : ""}" style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px;">
+        <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
+          <strong class="${activeWhistTrickReveal ? "whist-trick-winner-label" : ""}">
+            ${activeWhistTrickReveal ? `Won by ${whistRevealWinnerName}` : "Current Trick"}
+          </strong>
+        </div>
         <div class="split-stack whist-trick-stack" style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: flex-start;">
           ${currentTrickCardsHtml}
         </div>
