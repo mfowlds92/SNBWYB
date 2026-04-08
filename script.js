@@ -1276,6 +1276,7 @@ function render() {
   renderScoreboard();
   renderChat();
   renderWhist();
+  renderDebugMetrics();
 
   requestAnimationFrame(() => {
     autoFitAllCardStacks();
@@ -1626,6 +1627,45 @@ function renderPlayers() {
         ${rows}
       </tbody>
     </table>
+  `;
+}
+
+function formatDebugBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+  }
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${value} B`;
+}
+
+function renderDebugMetrics() {
+  const footerEl = document.getElementById("debugMetricsFooter");
+  if (!footerEl) return;
+
+  const metrics = state?.debugMetrics;
+  if (!state?.trumpCard || !metrics) {
+    footerEl.innerHTML = "";
+    footerEl.style.display = "none";
+    return;
+  }
+
+  footerEl.style.display = "block";
+  footerEl.innerHTML = `
+    <div class="debug-metrics-grid">
+      <span><strong>Room State:</strong> ${formatDebugBytes(metrics.roomStateBytes)}</span>
+      <span><strong>Sent State:</strong> ${formatDebugBytes(metrics.clientStateBytes)}</span>
+      <span><strong>Round History:</strong> ${formatDebugBytes(metrics.roundHistoryBytes)}</span>
+      <span><strong>Heap Used:</strong> ${formatDebugBytes(metrics.heapUsedBytes)}</span>
+      <span><strong>Heap Total:</strong> ${formatDebugBytes(metrics.heapTotalBytes)}</span>
+      <span><strong>RSS:</strong> ${formatDebugBytes(metrics.rssBytes)}</span>
+      <span><strong>External:</strong> ${formatDebugBytes(metrics.externalBytes)}</span>
+      <span><strong>Array Buffers:</strong> ${formatDebugBytes(metrics.arrayBuffersBytes)}</span>
+      <span><strong>Players:</strong> ${metrics.playerCount || 0}</span>
+      <span><strong>Round:</strong> ${metrics.round || 0}</span>
+    </div>
   `;
 }
 

@@ -242,16 +242,39 @@ function buildStateForPlayer(state, playerIndex) {
   return safeState;
 }
 
+function getStateByteSize(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return 0;
+  }
+}
+
 function sendStateToRoom(roomId) {
   const room = rooms[roomId];
   if (!room || !room.state) return;
   syncRoomPlayersList(room);
+  const processMemory = process.memoryUsage();
+  const roomStateBytes = getStateByteSize(room.state);
+  const roundHistoryBytes = getStateByteSize(room.state.roundHistory || []);
 
   room.players.forEach((socketId, playerIndex) => {
     const socket = io.sockets.sockets.get(socketId);
     if (!socket) return;
 
     const safeState = buildStateForPlayer(room.state, playerIndex);
+    safeState.debugMetrics = {
+      roomStateBytes,
+      clientStateBytes: getStateByteSize(safeState),
+      roundHistoryBytes,
+      rssBytes: processMemory.rss,
+      heapTotalBytes: processMemory.heapTotal,
+      heapUsedBytes: processMemory.heapUsed,
+      externalBytes: processMemory.external,
+      arrayBuffersBytes: processMemory.arrayBuffers || 0,
+      playerCount: room.playersList.length,
+      round: room.state.round || 0
+    };
     socket.emit("playerIndex", playerIndex);
     socket.emit("stateUpdate", safeState);
     socket.emit("roomMeta", {
