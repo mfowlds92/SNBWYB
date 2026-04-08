@@ -224,17 +224,6 @@ function buildStateForPlayer(state, playerIndex) {
     };
   });
 
-  if (Array.isArray(state.whist?.lastWonTrickByPlayer)) {
-    safeState.whist.lastWonTrickByPlayer = state.whist.lastWonTrickByPlayer.map((cards, index) => {
-      if (index === playerIndex) return cards;
-      return makeHiddenCardsFromSource(cards, `hidden-wontrick-${index}`);
-    });
-  }
-
-  if (Array.isArray(state.whist?.wonTricksByPlayer)) {
-    safeState.whist.wonTricksByPlayer = state.whist.wonTricksByPlayer;
-  }
-
   if (Array.isArray(state.whist?.wonTrickPiles)) {
     safeState.whist.wonTrickPiles = state.whist.wonTrickPiles;
   }
@@ -274,13 +263,26 @@ function getRoomDebugMetrics(room) {
     roomCount: Object.keys(rooms).length,
     connectedSockets: io.sockets.sockets.size,
     wonTrickPileCards: countNestedCards(roomState.whist?.wonTrickPiles || []),
-    wonTricksByPlayerCards: countNestedCards(roomState.whist?.wonTricksByPlayer || []),
     roundHistoryCards: countNestedCards(roundHistory),
     currentSummaryCards: countNestedCards(currentRoundSummary),
     whistTrickHistoryEntries: roundHistory.reduce(
       (sum, summary) => sum + (summary?.whistTrickHistory?.length || 0),
       0
     ) + (currentRoundSummary?.whistTrickHistory?.length || 0)
+  };
+}
+
+function buildRoomDebugSummary(room) {
+  return {
+    roomId: room.roomId,
+    roomName: room.roomName,
+    gameStarted: !!room.gameStarted,
+    ownerPlayerId: room.ownerPlayerId,
+    ownerName: room.ownerName || null,
+    playerIdsCount: room.playerIds?.length || 0,
+    connectedPlayerSockets: room.players.filter(Boolean).length,
+    playersList: room.playersList || [],
+    chatMessagesCount: room.chatMessages?.length || 0
   };
 }
 
@@ -314,7 +316,6 @@ function sendStateToRoom(roomId) {
       roomCount: roomDebug.roomCount,
       connectedSockets: roomDebug.connectedSockets,
       wonTrickPileCards: roomDebug.wonTrickPileCards,
-      wonTricksByPlayerCards: roomDebug.wonTricksByPlayerCards,
       roundHistoryCards: roomDebug.roundHistoryCards,
       currentSummaryCards: roomDebug.currentSummaryCards,
       whistTrickHistoryEntries: roomDebug.whistTrickHistoryEntries
@@ -331,7 +332,8 @@ function sendStateToRoom(roomId) {
       playerCount: room.playersList.length,
       gameStarted: room.gameStarted,
       playersConnected: room.players.filter(Boolean).length,
-      playersTotal: room.playerIds.length
+      playersTotal: room.playerIds.length,
+      debugRoomSummary: buildRoomDebugSummary(room)
     });
   });
 }

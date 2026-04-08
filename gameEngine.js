@@ -94,14 +94,13 @@ yaniv: {
   lastCompletedTrickWinnerIndex: null,
   lastCompletedTrickEventId: 0,
   tricksWon: playerNames.map(() => 0),
-  lastWonTrickByPlayer: playerNames.map(() => []),
-  wonTricksByPlayer: playerNames.map(() => []),
   wonTrickPiles: [],
   robotNoBotPending: false,
   robotNoBotAwaitingContinue: false,
   robotNoBotMode: null,
   robotNoBotResults: playerNames.map(() => null),
   robotNoBotCoinResult: null,
+  robotNoBotFlipEventId: 0,
   result: null,
   trickWinnerIndex: null,
   selectionsComplete: false,
@@ -137,6 +136,22 @@ export function createCurrentRoundSummary(state) {
     yanivResult: null,
     whistResults: [],
     whistTrickHistory: []
+  };
+}
+
+function createCompactRoundHistoryEntry(state, roundSummary = null) {
+  return {
+    round: state.round,
+    trump: getTrumpLabel(state),
+    scores: state.players.map((player, index) => ({
+      playerIndex: index,
+      playerName: player.name,
+      nomination: roundSummary?.nominations?.find((entry) => entry.playerIndex === index)?.nomination ?? null,
+      bragPoints: roundSummary?.bragResults?.find((entry) => entry.playerIndex === index)?.points ?? 0,
+      yanivPoints: roundSummary?.yanivResult?.pointsByPlayer?.find((entry) => entry.playerIndex === index)?.points ?? 0,
+      whistPoints: roundSummary?.whistResults?.find((entry) => entry.playerIndex === index)?.points ?? 0,
+      totalScore: Number(player.score) || 0
+    }))
   };
 }
 
@@ -721,7 +736,12 @@ export function resolveBrag(state) {
     }));
   }
 
-  return results;
+  return results.map((res) => ({
+    index: res.index,
+    name: res.name,
+    score: res.score,
+    position: res.position
+  }));
 }
 
 function buildWhistResults(state) {
@@ -880,11 +900,6 @@ function advanceWhistTurn(state) {
       state.whist.lastCompletedTrickEventId = (state.whist.lastCompletedTrickEventId || 0) + 1;
       state.whist.tricksWon[winner.playerIndex] += 1;
       const wonCards = state.whist.currentTrick.map((entry) => entry.card);
-      state.whist.lastWonTrickByPlayer[winner.playerIndex] = wonCards;
-      state.whist.wonTricksByPlayer[winner.playerIndex] = [
-        ...(state.whist.wonTricksByPlayer[winner.playerIndex] || []),
-        ...wonCards
-      ];
       state.whist.wonTrickPiles = [
         ...(state.whist.wonTrickPiles || []),
         {
@@ -926,6 +941,8 @@ function advanceWhistTurn(state) {
     state.whist.result = {
       results: buildWhistResults(state)
     };
+    state.whist.currentTrick = [];
+    state.whist.lastCompletedTrick = [];
 
     if (state.currentRoundSummary) {
       state.currentRoundSummary.whistResults = state.whist.result.results;
@@ -935,7 +952,7 @@ function advanceWhistTurn(state) {
         nomination: player.nomination
       }));
       state.roundHistory = Array.isArray(state.roundHistory) ? state.roundHistory : [];
-      state.roundHistory.push(state.currentRoundSummary);
+      state.roundHistory.push(createCompactRoundHistoryEntry(state, state.currentRoundSummary));
       state.currentRoundSummary = null;
     }
   }
@@ -1380,6 +1397,7 @@ export function resolveRobotNoBot(state) {
   const coinResult = Math.random() < 0.5 ? "robot" : "nobot";
   newState.whist.robotNoBotCoinResult = coinResult;
   newState.whist.robotNoBotResults = newState.players.map(() => coinResult);
+  newState.whist.robotNoBotFlipEventId = (newState.whist.robotNoBotFlipEventId || 0) + 1;
 
   newState.players.forEach((_, playerIndex) => {
     applyRobotNoBotAssignmentsForPlayer(
@@ -1465,14 +1483,13 @@ newState.brag = {
   newState.whist.lastCompletedTrickWinnerIndex = null;
   newState.whist.lastCompletedTrickEventId = 0;
   newState.whist.tricksWon = newState.players.map(() => 0);
-  newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
-  newState.whist.wonTricksByPlayer = newState.players.map(() => []);
   newState.whist.wonTrickPiles = [];
   newState.whist.robotNoBotPending = false;
   newState.whist.robotNoBotAwaitingContinue = false;
   newState.whist.robotNoBotMode = null;
   newState.whist.robotNoBotResults = newState.players.map(() => null);
   newState.whist.robotNoBotCoinResult = null;
+  newState.whist.robotNoBotFlipEventId = 0;
   newState.whist.result = null;
   newState.whist.trickWinnerIndex = null;
   newState.whist.selectionsComplete = false;
@@ -2015,6 +2032,9 @@ export function callYaniv(state, playerIndex) {
 
   newState.yaniv.started = false;
   newState.yaniv.result = result;
+  newState.yaniv.drawPile = [];
+  newState.yaniv.discardPile = [];
+  newState.yaniv.pendingDiscard = [];
 
   if (newState.currentRoundSummary) {
     newState.currentRoundSummary.yanivResult = result;
@@ -2096,14 +2116,13 @@ newState.brag = {
   newState.whist.lastCompletedTrickWinnerIndex = null;
   newState.whist.lastCompletedTrickEventId = 0;
   newState.whist.tricksWon = newState.players.map(() => 0);
-  newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
-  newState.whist.wonTricksByPlayer = newState.players.map(() => []);
   newState.whist.wonTrickPiles = [];
   newState.whist.robotNoBotPending = false;
   newState.whist.robotNoBotAwaitingContinue = false;
   newState.whist.robotNoBotMode = null;
   newState.whist.robotNoBotResults = newState.players.map(() => null);
   newState.whist.robotNoBotCoinResult = null;
+  newState.whist.robotNoBotFlipEventId = 0;
   newState.whist.result = null;
   newState.whist.trickWinnerIndex = null;
   newState.whist.selectionsComplete = false;
@@ -2185,14 +2204,13 @@ export function jumpToRound(state, targetRound) {
   newState.whist.lastCompletedTrickWinnerIndex = null;
   newState.whist.lastCompletedTrickEventId = 0;
   newState.whist.tricksWon = newState.players.map(() => 0);
-  newState.whist.lastWonTrickByPlayer = newState.players.map(() => []);
-  newState.whist.wonTricksByPlayer = newState.players.map(() => []);
   newState.whist.wonTrickPiles = [];
   newState.whist.robotNoBotPending = false;
   newState.whist.robotNoBotAwaitingContinue = false;
   newState.whist.robotNoBotMode = null;
   newState.whist.robotNoBotResults = newState.players.map(() => null);
   newState.whist.robotNoBotCoinResult = null;
+  newState.whist.robotNoBotFlipEventId = 0;
   newState.whist.result = null;
   newState.whist.trickWinnerIndex = null;
   newState.whist.selectionsComplete = false;

@@ -22,6 +22,7 @@ let selectedYanivCardIds = [];
 let activeSortMode = 2; // 1 = suit, 2 = number
 let robotFlipAnimating = false;
 let robotFlipFaces = {};
+let robotFlipInterval = null;
 let activeYanivDrawHighlightSource = null;
 let activeYanivDrawHighlightTimer = null;
 let activeYanivSlamFlash = false;
@@ -34,6 +35,8 @@ let lastSeenBragKnockEventId = 0;
 let activeWhistTrickReveal = false;
 let activeWhistTrickRevealTimer = null;
 let lastSeenWhistTrickRevealEventId = 0;
+let lastSeenRobotNoBotFlipEventId = 0;
+let lastSeenRoundHistoryLength = 0;
 let nameInputDirty = false;
 let lastLobbySyncAt = 0;
 let lobbySyncIntervalId = null;
@@ -134,6 +137,33 @@ socket.emit("initSession", {
   currentRoomId: roomId
 });
 
+function stopRobotFlipAnimation() {
+  if (robotFlipInterval) {
+    clearInterval(robotFlipInterval);
+    robotFlipInterval = null;
+  }
+  robotFlipAnimating = false;
+  robotFlipFaces = {};
+}
+
+function startRobotFlipAnimation() {
+  stopRobotFlipAnimation();
+  if (!state?.players?.length) return;
+
+  robotFlipAnimating = true;
+  robotFlipInterval = setInterval(() => {
+    for (let i = 0; i < state.players.length; i += 1) {
+      robotFlipFaces[i] = Math.random() < 0.5 ? "robot" : "nobot";
+    }
+    render();
+  }, 120);
+
+  setTimeout(() => {
+    stopRobotFlipAnimation();
+    render();
+  }, 2400);
+}
+
 socket.on("sessionReady", (payload) => {
   playerId = payload.playerId;
   localStorage.setItem("nsybwb_player_id", playerId);
@@ -217,6 +247,15 @@ socket.on("chatMessage", ({ roomId: incomingRoomId, message }) => {
 
 socket.on("stateUpdate", (newState) => {
   state = newState;
+  const roundHistoryLength = Array.isArray(state?.roundHistory) ? state.roundHistory.length : 0;
+  if (roundHistoryLength < lastSeenRoundHistoryLength) {
+    lastSeenRoundHistoryLength = 0;
+  }
+  if (roundHistoryLength > lastSeenRoundHistoryLength) {
+    lastSeenRoundHistoryLength = roundHistoryLength;
+    console.log("Round complete state snapshot:", state);
+    console.log("Round complete room summary:", roomMeta?.debugRoomSummary || null);
+  }
   applyActiveSortToCurrentPhase();
   const myPlayer = playerIndex !== null ? state.players[playerIndex] : null;
   const alreadySaved = !!myPlayer?.assignments || !!myPlayer?.swapSelection;
@@ -250,9 +289,17 @@ socket.on("stateUpdate", (newState) => {
     );
   }
 
-  if (!state?.whist?.robotNoBotPending) {
-    robotFlipAnimating = false;
-    robotFlipFaces = {};
+  if (!state?.whist?.robotNoBotPending && !state?.whist?.robotNoBotAwaitingContinue) {
+    stopRobotFlipAnimation();
+  }
+
+  const robotNoBotFlipEventId = state?.whist?.robotNoBotFlipEventId || 0;
+  if (robotNoBotFlipEventId < lastSeenRobotNoBotFlipEventId) {
+    lastSeenRobotNoBotFlipEventId = 0;
+  }
+  if (robotNoBotFlipEventId > lastSeenRobotNoBotFlipEventId) {
+    lastSeenRobotNoBotFlipEventId = robotNoBotFlipEventId;
+    startRobotFlipAnimation();
   }
 
   const drawEventId = state?.yaniv?.lastDrawAction?.eventId || 0;
@@ -1286,22 +1333,7 @@ function render() {
 function resolveRobotNoBotHandler() {
   if (!state?.whist?.robotNoBotPending) return;
   if (robotFlipAnimating) return;
-
-  const playerCount = state.players.length;
-  robotFlipAnimating = true;
-
-  const interval = setInterval(() => {
-    for (let i = 0; i < playerCount; i += 1) {
-      robotFlipFaces[i] = Math.random() < 0.5 ? "robot" : "nobot";
-    }
-    render();
-  }, 120);
-
-  setTimeout(() => {
-    clearInterval(interval);
-    robotFlipAnimating = false;
-    socket.emit("resolveRobotNoBot", roomId);
-  }, 2400);
+  socket.emit("resolveRobotNoBot", roomId);
 }
 
 function continueAfterRobotNoBotHandler() {
@@ -1668,7 +1700,6 @@ function renderDebugMetrics() {
       <span><strong>Room Chat:</strong> ${metrics.roomChatMessages || 0}</span>
       <span><strong>Total Chat:</strong> ${metrics.totalChatMessages || 0}</span>
       <span><strong>Won Pile Cards:</strong> ${metrics.wonTrickPileCards || 0}</span>
-      <span><strong>Won Trick Cards:</strong> ${metrics.wonTricksByPlayerCards || 0}</span>
       <span><strong>History Cards:</strong> ${metrics.roundHistoryCards || 0}</span>
       <span><strong>Summary Cards:</strong> ${metrics.currentSummaryCards || 0}</span>
       <span><strong>Trick Log Entries:</strong> ${metrics.whistTrickHistoryEntries || 0}</span>
@@ -1705,6 +1736,15 @@ function renderScoreboard() {
 
   allRounds.forEach((roundSummary) => {
     state.players.forEach((player, pIdx) => {
+      if (Array.isArray(roundSummary.scores)) {
+        const savedScore = roundSummary.scores?.find((entry) => entry.playerIndex === pIdx);
+        cumulativeByPlayer[pIdx].nomination += Number(savedScore?.nomination || 0);
+        cumulativeByPlayer[pIdx].brag += Number(savedScore?.bragPoints || 0);
+        cumulativeByPlayer[pIdx].yaniv += Number(savedScore?.yanivPoints || 0);
+        cumulativeByPlayer[pIdx].whist += Number(savedScore?.whistPoints || 0);
+        cumulativeByPlayer[pIdx].total = Number(savedScore?.totalScore || cumulativeByPlayer[pIdx].total);
+        return;
+      }
       const nominationRaw = roundSummary.nominations?.find((n) => n.playerIndex === pIdx)?.nomination;
       const nomination = Number.isFinite(Number(nominationRaw)) ? Number(nominationRaw) : 0;
       const bragPoints = roundSummary.bragResults?.find((result) => result.playerIndex === pIdx)?.points ?? 0;
@@ -1739,15 +1779,29 @@ function renderScoreboard() {
     .map((roundSummary, idx) => {
       const isInProgress = idx === allRounds.length - 1 && currentSummary;
       let playerCells = "";
+      const isCompactHistoryRow = Array.isArray(roundSummary.scores);
       const trumpRaw = roundSummary.trump || "-";
       const trumpDisplay = suitIconMap[trumpRaw] || trumpRaw;
 
       state.players.forEach((player, pIdx) => {
-        const nomination = roundSummary.nominations?.find((n) => n.playerIndex === pIdx)?.nomination ?? "-";
-        const bragPoints = roundSummary.bragResults?.find((result) => result.playerIndex === pIdx)?.points ?? 0;
-        const yanivPoints = roundSummary.yanivResult?.pointsByPlayer?.find((result) => result.playerIndex === pIdx)?.points ?? 0;
-        const whistPoints = roundSummary.whistResults?.find((result) => result.playerIndex === pIdx)?.points ?? 0;
-        const roundTotal = bragPoints + yanivPoints + whistPoints;
+        const compactScoreRow = isCompactHistoryRow
+          ? roundSummary.scores?.find((entry) => entry.playerIndex === pIdx)
+          : null;
+        const nomination = isCompactHistoryRow
+          ? (compactScoreRow?.nomination ?? "-")
+          : (roundSummary.nominations?.find((n) => n.playerIndex === pIdx)?.nomination ?? "-");
+        const bragPoints = isCompactHistoryRow
+          ? (compactScoreRow?.bragPoints ?? 0)
+          : (roundSummary.bragResults?.find((result) => result.playerIndex === pIdx)?.points ?? 0);
+        const yanivPoints = isCompactHistoryRow
+          ? (compactScoreRow?.yanivPoints ?? 0)
+          : (roundSummary.yanivResult?.pointsByPlayer?.find((result) => result.playerIndex === pIdx)?.points ?? 0);
+        const whistPoints = isCompactHistoryRow
+          ? (compactScoreRow?.whistPoints ?? 0)
+          : (roundSummary.whistResults?.find((result) => result.playerIndex === pIdx)?.points ?? 0);
+        const roundTotal = isCompactHistoryRow
+          ? (compactScoreRow?.totalScore ?? (Number(bragPoints) + Number(yanivPoints) + Number(whistPoints)))
+          : (bragPoints + yanivPoints + whistPoints);
 
         playerCells += `<td class="scoreboard-col-nomination">${nomination}</td><td class="scoreboard-col-brag">${bragPoints}</td><td class="scoreboard-col-yaniv">${yanivPoints}</td><td class="scoreboard-col-whist">${whistPoints}</td><td class="scoreboard-col-total">${roundTotal}</td>`;
       });
@@ -2192,7 +2246,6 @@ function renderBragResults() {
     .map((player, idx) => {
       const result = state.brag.results.find((r) => r.index === idx);
       if (!result) return "";
-      
       const bragHand = player.assignments?.brag || [];
       const cardsHtml = bragHand
         .map(card => `<button class="split-card-button" style="margin: 0;">${cardToText(card)}</button>`)
@@ -2538,7 +2591,9 @@ function renderWhist() {
 
     const flipPanelsHtml = state.players
       .map((player, idx) => {
-        const face = state.whist.robotNoBotResults?.[idx] || displayFace;
+        const face = robotFlipAnimating
+          ? (robotFlipFaces[idx] || "nobot")
+          : (state.whist.robotNoBotResults?.[idx] || displayFace);
 
         const split = player.swapSelection || { left: [], right: [], fixed: [] };
         const leftHtml = (split.left || []).map((card) => `<button class="split-card-button" disabled style="opacity:1;margin:0;">${cardToText(card)}</button>`).join("");
