@@ -1663,6 +1663,15 @@ function renderDebugMetrics() {
       <span><strong>RSS:</strong> ${formatDebugBytes(metrics.rssBytes)}</span>
       <span><strong>External:</strong> ${formatDebugBytes(metrics.externalBytes)}</span>
       <span><strong>Array Buffers:</strong> ${formatDebugBytes(metrics.arrayBuffersBytes)}</span>
+      <span><strong>Rooms:</strong> ${metrics.roomCount || 0}</span>
+      <span><strong>Sockets:</strong> ${metrics.connectedSockets || 0}</span>
+      <span><strong>Room Chat:</strong> ${metrics.roomChatMessages || 0}</span>
+      <span><strong>Total Chat:</strong> ${metrics.totalChatMessages || 0}</span>
+      <span><strong>Won Pile Cards:</strong> ${metrics.wonTrickPileCards || 0}</span>
+      <span><strong>Won Trick Cards:</strong> ${metrics.wonTricksByPlayerCards || 0}</span>
+      <span><strong>History Cards:</strong> ${metrics.roundHistoryCards || 0}</span>
+      <span><strong>Summary Cards:</strong> ${metrics.currentSummaryCards || 0}</span>
+      <span><strong>Trick Log Entries:</strong> ${metrics.whistTrickHistoryEntries || 0}</span>
       <span><strong>Players:</strong> ${metrics.playerCount || 0}</span>
       <span><strong>Round:</strong> ${metrics.round || 0}</span>
     </div>
