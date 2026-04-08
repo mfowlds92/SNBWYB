@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" referrerpolicy="no-referrer" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=1" />
 </head>
 <body>
 <div id="app"></div>
@@ -76,7 +76,7 @@
     <section class="panel" data-tab="splitter">
       <div class="panel-header-with-tooltip">
         <h2 style="display:none;">Hand Splitter</h2>
-        <div class="tooltip-icon" title="Split your hand into Basketball Brag, Yaniv, and Nomination Whist piles">?</div>
+        <div class="tooltip-icon" title="Split your hand into Brag, Yaniv, and Whist piles">?</div>
       </div>
       <p id="splitInstructions" style="display:none;"></p>
       <div id="splitter"></div>
@@ -84,7 +84,7 @@
 
     <section class="panel" data-tab="brag">
       <div class="panel-header-with-tooltip">
-        <h2 style="display:none;">Basketball Brag</h2>
+        <h2 style="display:none;">Brag</h2>
         <div class="tooltip-icon" title="Players compete to have the best 3-card hand">?</div>
       </div>
       <p id="bragStatus">Brag not started yet.</p>
@@ -119,7 +119,7 @@
 
     <section class="panel" data-tab="whist">
       <div class="panel-header-with-tooltip">
-        <h2 style="display:none;">Nomination Whist</h2>
+        <h2 style="display:none;">Whist</h2>
         <div class="tooltip-icon" title="Nominate tricks and win exactly that many">?</div>
       </div>
       <div id="whistTable"></div>
@@ -135,7 +135,7 @@
   </div>
 </main>
   </div>
-  <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="script.js"></script>
+  <script src="/socket.io/socket.io.js?v=1"></script>
+  <script type="module" src="script.js?v=1"></script>
 </body>
 </html>
