@@ -63,7 +63,9 @@ brag: {
   guruActive: false,
   knockAvailable: false,
   knock: null,
-  finalTurnsRemaining: 0
+  finalTurnsRemaining: 0,
+  lastKnockAction: null,
+  knockEventCounter: 0
 },
 
 yaniv: {
@@ -847,6 +849,11 @@ export function chooseKnockOrGuru(state, playerIndex, choice) {
     brag.knockAvailable = false;
     brag.finalTurnsRemaining = newState.players.length - 1;
     brag.currentPlayerIndex = nextPlayerIndex;
+    brag.knockEventCounter = (brag.knockEventCounter || 0) + 1;
+    brag.lastKnockAction = {
+      playerIndex,
+      eventId: brag.knockEventCounter
+    };
     return { state: newState };
   }
 
@@ -1397,7 +1404,9 @@ newState.brag = {
   guruActive: false,
   knockAvailable: false,
   knock: null,
-  finalTurnsRemaining: 0
+  finalTurnsRemaining: 0,
+  lastKnockAction: null,
+  knockEventCounter: 0
 };
 
   newState.yaniv.started = false;
@@ -2020,7 +2029,9 @@ newState.brag = {
   guruActive: false,
   knockAvailable: false,
   knock: null,
-  finalTurnsRemaining: 0
+  finalTurnsRemaining: 0,
+  lastKnockAction: null,
+  knockEventCounter: 0
 };
 
   newState.yaniv.started = false;
@@ -2104,7 +2115,9 @@ export function jumpToRound(state, targetRound) {
     guruActive: false,
     knockAvailable: false,
     knock: null,
-    finalTurnsRemaining: 0
+    finalTurnsRemaining: 0,
+    lastKnockAction: null,
+    knockEventCounter: 0
   };
 
   newState.yaniv.started = false;

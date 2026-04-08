@@ -28,6 +28,9 @@ let activeYanivSlamFlash = false;
 let activeYanivSlamFlashTimer = null;
 let lastSeenYanivDrawEventId = 0;
 let lastSeenYanivSlamEventId = 0;
+let activeBragKnockFlash = false;
+let activeBragKnockFlashTimer = null;
+let lastSeenBragKnockEventId = 0;
 let nameInputDirty = false;
 let lastLobbySyncAt = 0;
 let lobbySyncIntervalId = null;
@@ -290,6 +293,20 @@ console.log(state);
     activeYanivSlamFlashTimer = setTimeout(() => {
       activeYanivSlamFlash = false;
       activeYanivSlamFlashTimer = null;
+      render();
+    }, 2000);
+  }
+
+  const bragKnockEventId = state?.brag?.lastKnockAction?.eventId || 0;
+  if (bragKnockEventId > lastSeenBragKnockEventId) {
+    lastSeenBragKnockEventId = bragKnockEventId;
+    activeBragKnockFlash = true;
+    if (activeBragKnockFlashTimer) {
+      clearTimeout(activeBragKnockFlashTimer);
+    }
+    activeBragKnockFlashTimer = setTimeout(() => {
+      activeBragKnockFlash = false;
+      activeBragKnockFlashTimer = null;
       render();
     }, 2000);
   }
@@ -1976,6 +1993,9 @@ function renderBrag() {
         })
         .join("")
     : ``;
+  const bragBoardLabel = activeBragKnockFlash ? "KNOCK" : "";
+  const bragBoardLabelClass = activeBragKnockFlash ? "brag-knock-label" : "";
+  const bragBoardHighlightClass = activeBragKnockFlash ? "brag-knock-highlight" : "";
 
   const knockGuruButtons = shouldShowKnockGuru()
     ? `
@@ -1987,9 +2007,14 @@ function renderBrag() {
   bragControlsEl.innerHTML = `
     <div class="split-piles-area normal-layout" style="display: grid; grid-template-columns: 1fr; margin-top: 20px;">
       <div 
-        class="split-pile split-pile-clickable" 
+        class="split-pile split-pile-clickable ${bragBoardHighlightClass}" 
         style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px;"
       >
+        ${bragBoardLabel ? `
+          <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
+            <strong class="${bragBoardLabelClass}">${bragBoardLabel}</strong>
+          </div>
+        ` : ""}
         <div class="split-stack" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
           ${communityHtml}
         </div>
