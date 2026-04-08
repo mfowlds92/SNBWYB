@@ -19,12 +19,15 @@ let selectedBragCommunityCardId = null;
 
 // temporary client-side yaniv state
 let selectedYanivCardIds = [];
-let activeSortMode = 0; // 0 = none, 1 = suit, 2 = number
+let activeSortMode = 2; // 1 = suit, 2 = number
 let robotFlipAnimating = false;
 let robotFlipFaces = {};
 let activeYanivDrawHighlightSource = null;
 let activeYanivDrawHighlightTimer = null;
+let activeYanivSlamFlash = false;
+let activeYanivSlamFlashTimer = null;
 let lastSeenYanivDrawEventId = 0;
+let lastSeenYanivSlamEventId = 0;
 let nameInputDirty = false;
 let lastLobbySyncAt = 0;
 let lobbySyncIntervalId = null;
@@ -277,6 +280,20 @@ console.log(state);
     }, 1000);
   }
 
+  const slamEventId = state?.yaniv?.lastSlamAction?.eventId || 0;
+  if (slamEventId > lastSeenYanivSlamEventId) {
+    lastSeenYanivSlamEventId = slamEventId;
+    activeYanivSlamFlash = true;
+    if (activeYanivSlamFlashTimer) {
+      clearTimeout(activeYanivSlamFlashTimer);
+    }
+    activeYanivSlamFlashTimer = setTimeout(() => {
+      activeYanivSlamFlash = false;
+      activeYanivSlamFlashTimer = null;
+      render();
+    }, 2000);
+  }
+
   render();
 });
 
@@ -383,6 +400,17 @@ function autoFitSingleStack(stackEl) {
     btn.style.setProperty("margin-left", "0px", "important");
   });
 
+  const isMobileWhistHandStack =
+    window.innerWidth <= 640 &&
+    !!stackEl.closest(".whist-hand-pile");
+
+  if (isMobileWhistHandStack) {
+    stackEl.style.justifyContent = "flex-start";
+    stackEl.style.flexWrap = "wrap";
+    stackEl.style.overflow = "visible";
+    return;
+  }
+
   if (cardButtons.length === 1) return;
 
   const firstButton = cardButtons[0];
@@ -394,28 +422,18 @@ function autoFitSingleStack(stackEl) {
   const cardCount = cardButtons.length;
   const gaps = cardCount - 1;
   const isWonTrickStack = stackEl.classList.contains("whist-won-trick-stack");
-  const baseGap = isWonTrickStack ? -Math.floor(cardWidth * 0.18) : 8;
-  const totalNoOverlapWidth = (cardCount * cardWidth) + (gaps * baseGap);
-  const overflow = totalNoOverlapWidth - availableWidth;
+  const maxGap = isWonTrickStack ? -Math.floor(cardWidth * 0.18) : 8;
+  const minVisibleWidth = isWonTrickStack
+    ? Math.max(10, Math.floor(cardWidth * 0.16))
+    : Math.max(16, Math.floor(cardWidth * 0.2));
+  const minGap = -(cardWidth - minVisibleWidth);
+  const fittedGap = Math.floor((availableWidth - (cardCount * cardWidth)) / gaps);
+  const marginLeftValue = Math.max(minGap, Math.min(maxGap, fittedGap));
 
-  // Center cards and keep them close together when there is extra room.
-  stackEl.style.justifyContent = "center";
+  // Keep stacks aligned to the left so the visible width stays stable as counts change.
+  stackEl.style.justifyContent = "flex-start";
   stackEl.style.flexWrap = "nowrap";
   stackEl.style.overflow = "hidden";
-
-  let marginLeftValue = baseGap;
-  if (overflow > 0) {
-    const maxAllowedOverlap = Math.floor(cardWidth * 0.8);
-    if (baseGap < 0) {
-      const extraOverlapPerGap = Math.ceil(overflow / gaps);
-      const targetOverlap = Math.min(maxAllowedOverlap, (-baseGap) + extraOverlapPerGap);
-      marginLeftValue = -targetOverlap;
-    } else {
-      let overlapPerGap = Math.ceil(overflow / gaps);
-      overlapPerGap = Math.min(overlapPerGap, maxAllowedOverlap);
-      marginLeftValue = -overlapPerGap;
-    }
-  }
 
   for (let i = 1; i < cardButtons.length; i += 1) {
     cardButtons[i].style.setProperty(
@@ -659,9 +677,9 @@ function getAssignmentTargets() {
   if (!state) return [];
 
   return [
-    { key: "brag", label: "Basketball Brag", required: 3 },
+    { key: "brag", label: "Brag", required: 3 },
     { key: "yaniv", label: "Yaniv", required: 5 },
-    { key: "whist", label: "Nomination Whist", required: getWhistCardCount() }
+    { key: "whist", label: "Whist", required: getWhistCardCount() }
   ];
 }
 
@@ -1287,16 +1305,21 @@ function buildTrumpCardHtml() {
     Clubs: "&clubs;",
     Spades: "&spades;"
   };
+  const isJoker = state.trumpCard.rank === "Joker";
   const suit = state.trumpCard.suit;
-  const symbol = suitSymbols[suit] || "🃏";
-  const colorClass = suit === "Hearts" || suit === "Diamonds" ? "red" : "black";
+  const symbol = isJoker ? "J" : (suitSymbols[suit] || "J");
+  const colorClass = isJoker
+    ? "joker"
+    : (suit === "Hearts" || suit === "Diamonds" ? "red" : "black");
   const backClass = getCardBackClass(state.trumpCard.backColor);
+  const rankText = isJoker ? 'J<span class="joker-suffix">o</span>' : state.trumpCard.rank;
+  const suitText = isJoker ? "" : symbol;
 
   return `
     <div class="card trump-mini-card ${backClass}">
-      <div class="trump-mini-content ${colorClass}">
-        <span class="trump-mini-rank">${state.trumpCard.rank}</span>
-        <span class="trump-mini-suit">${symbol}</span>
+      <div class="trump-mini-content trump-display-face ${colorClass}">
+        <span class="simple-card-rank">${rankText}</span>
+        ${suitText ? `<span class="simple-card-suit">${suitText}</span>` : ""}
       </div>
     </div>
   `;
@@ -1322,7 +1345,7 @@ function renderStatus() {
 
   if (state.brag.started && !state.brag.results) {
     const currentPlayer = state.players[state.brag.currentPlayerIndex];
-    phaseValue = "Basketball Brag";
+    phaseValue = "Brag";
     detailValue = `${currentPlayer?.name || "Unknown player"}'s turn.`;
   } else if (state.yaniv.started && !state.yaniv.result) {
     const currentPlayer = state.players[state.yaniv.currentPlayerIndex];
@@ -1391,12 +1414,7 @@ function renderSidebarTrump() {
   }
 
   trumpEl.innerHTML = `
-    <section class="sidebar-subpanel sidebar-trump-panel">
-      <div class="status-trump">
-        <div class="status-trump-label">Trump</div>
-        <div class="card-row">${buildTrumpCardHtml()}</div>
-      </div>
-    </section>
+    <div class="card-row trump-card-row">${buildTrumpCardHtml()}</div>
   `;
 }
 
@@ -1446,10 +1464,17 @@ function renderPlayerStatusBoxes() {
     const isLeader = (Number(player.score) || 0) === topScore;
     const isDealer = player.index === state.dealerIndex;
     const isBragKnocker = state.brag?.started && state.brag?.knock?.playerIndex === player.index;
-    const leaderIcon = isLeader ? `<span class="leader-crown-icon" title="Leader" aria-label="Leader"><i class="fa-solid fa-crown"></i></span>` : "";
-    const dealerIcon = isDealer ? `<span class="dealer-card-icon" title="Dealer" aria-label="Dealer"><i class="fa-solid fa-cube"></i></span>` : "";
+    const youIcon = player.index === playerIndex
+      ? `<span class="you-icon player-status-badge" title="You" aria-label="You"><i class="fa-solid fa-user"></i></span>`
+      : "";
+    const leaderIcon = isLeader
+      ? `<span class="leader-crown-icon player-status-badge" title="Leader" aria-label="Leader"><i class="fa-solid fa-crown"></i></span>`
+      : "";
+    const dealerIcon = isDealer
+      ? `<span class="dealer-card-icon player-status-badge" title="Dealer" aria-label="Dealer"><i class="fa-solid fa-cube"></i></span>`
+      : "";
     const knockIcon = isBragKnocker
-      ? `<span class="player-knock-icon" title="Knocked" aria-label="Knocked"><i class="fa-solid fa-hand-fist"></i></span>`
+      ? `<span class="player-knock-icon player-status-badge" title="Knocked" aria-label="Knocked"><i class="fa-solid fa-hand-fist"></i></span>`
       : "";
 
     let cardsForPhase = [];
@@ -1467,19 +1492,22 @@ function renderPlayerStatusBoxes() {
           .map((card) => `<div class="status-mini-back ${getCardBackClass(card.backColor)}"></div>`)
           .join("")
       : "";
+    const statusIconsHtml = [youIcon, leaderIcon, dealerIcon, knockIcon].join("");
     const boxClasses = ["player-status-box", statusClass, isBragKnocker ? "player-knocked" : ""]
       .filter(Boolean)
       .join(" ");
 
     return `
       <div class="${boxClasses}">
-        <div class="player-status-top">
-          <div class="player-status-label">${player.name}${player.index === playerIndex ? ' <span class="you-icon" title="You" aria-label="You"><i class="fa-solid fa-user"></i></span>' : ""}${leaderIcon}${dealerIcon}</div>
-          <div class="player-status-score"><strong>${player.score}</strong></div>
-        </div>
+        <div class="player-status-label">${player.name}</div>
+        <div class="player-status-score"><strong>${player.score}</strong></div>
+        ${statusIconsHtml ? `
+          <div class="player-status-icons-row">
+            <div class="player-status-icons">${statusIconsHtml}</div>
+          </div>
+        ` : ""}
         <div class="player-status-sub">${phaseNomText}</div>
         ${showMiniBacks ? `<div class="player-status-mini-backs">${miniBacksHtml}</div>` : ""}
-        ${knockIcon}
       </div>
     `;
   }).join("");
@@ -1683,6 +1711,7 @@ function renderSplitter() {
   if (me.assignments || me.swapSelection) {
     splitInstructionsEl.textContent = "You have already saved your hand split. Waiting for other players...";
     const swapMode = getRobotNoBotSwapModeClient();
+    const savedLayoutClass = swapMode ? "swap-layout" : "normal-layout";
     const savedTargets = swapMode
       ? [
           { key: "left", label: "Left Pile", color: "#D1D5DB", cards: me.swapSelection?.left || [] },
@@ -1701,7 +1730,7 @@ function renderSplitter() {
           .join("");
 
         return `
-          <div class="split-pile split-pile-clickable" style="background-color: rgba(${parseInt(pileColor.slice(1,3), 16)}, ${parseInt(pileColor.slice(3,5), 16)}, ${parseInt(pileColor.slice(5,7), 16)}, 0.85);">
+          <div class="split-pile split-pile-clickable split-pile-${target.key}" style="background-color: rgba(${parseInt(pileColor.slice(1,3), 16)}, ${parseInt(pileColor.slice(3,5), 16)}, ${parseInt(pileColor.slice(5,7), 16)}, 0.85);">
             <div class="split-pile-header-clickable">
               <strong>${target.label}</strong>
             </div>
@@ -1716,7 +1745,7 @@ function renderSplitter() {
     splitterEl.innerHTML = `
       <div class="split-player">
         <strong>Your split is saved.</strong>
-        <div class="split-piles-area normal-layout" style="margin-top: 12px;">
+        <div class="split-piles-area split-target-piles-area ${savedLayoutClass}" style="margin-top: 12px;">
           ${savedPilesHtml}
         </div>
       </div>
@@ -1735,6 +1764,7 @@ function renderSplitter() {
   }
 
   const swapMode = getRobotNoBotSwapModeClient();
+  const pilesLayoutClass = swapMode ? "swap-layout" : "normal-layout";
   const targets = swapMode
     ? [
         { key: "left", label: "Left Pile", required: swapMode.equalCount, color: "#D1D5DB" },
@@ -1806,7 +1836,7 @@ function renderSplitter() {
 
       return `
         <div 
-          class="split-pile split-pile-clickable" 
+          class="split-pile split-pile-clickable split-pile-${target.key}" 
           style="background-color: rgba(${parseInt(pileColor.slice(1,3), 16)}, ${parseInt(pileColor.slice(3,5), 16)}, ${parseInt(pileColor.slice(5,7), 16)}, 0.85);" 
         >
           <div class="split-pile-header-clickable" onclick="window.assignSelectedCards('${target.key}')">
@@ -1827,13 +1857,13 @@ function renderSplitter() {
     panelHeaderEl.innerHTML = `
       ${renderSortToggle(false)}
       <h2 style="display:none;">Hand Splitter</h2>
-      <div class="tooltip-icon" title="Split your hand into Basketball Brag, Yaniv, and Nomination Whist piles">?</div>
+      <div class="tooltip-icon" title="Split your hand into Brag, Yaniv, and Whist piles">?</div>
     `;
   }
 
   splitterEl.innerHTML = `
     <div class="split-player">
-      <div class="split-piles-area normal-layout" style="display: grid; grid-template-columns: 1fr; margin-bottom: 20px;">
+      <div class="split-piles-area split-unassigned-area" style="display: grid; grid-template-columns: 1fr; margin-bottom: 20px;">
         <div 
           class="split-pile split-pile-clickable" 
           style="background-color: rgba(118, 184, 118, 0.85);"
@@ -1847,7 +1877,7 @@ function renderSplitter() {
         </div>
       </div>
 
-      <div class="split-piles-area normal-layout">
+      <div class="split-piles-area split-target-piles-area ${pilesLayoutClass}">
         ${pilesHtml}
       </div>
     </div>
@@ -1897,7 +1927,7 @@ function renderBrag() {
   if (panelHeaderEl) {
     panelHeaderEl.innerHTML = `
       ${renderSortToggle(false)}
-      <h2 style="display:none;">Basketball Brag</h2>
+      <h2 style="display:none;">Brag</h2>
       <div class="tooltip-icon" title="Players compete to have the best 3-card hand">?</div>
     `;
   }
@@ -2160,8 +2190,13 @@ function renderYaniv() {
   const discardPileAction = canUsePileActions ? `onclick="window.discardAndDrawFromYanivDiscardHandler()"` : "";
   const drawPileAction = canUsePileActions ? `onclick="window.discardAndDrawFromYanivDeckHandler()"` : "";
   const pileActionStyle = canUsePileActions ? "cursor: pointer; opacity: 1;" : "cursor: not-allowed; opacity: 0.7;";
-  const discardPileHighlightClass = activeYanivDrawHighlightSource === "discard" ? "yaniv-pile-highlight" : "";
+  const discardPileHighlightClass = [
+    activeYanivDrawHighlightSource === "discard" ? "yaniv-pile-highlight" : "",
+    activeYanivSlamFlash ? "yaniv-slam-highlight" : ""
+  ].filter(Boolean).join(" ");
   const drawPileHighlightClass = activeYanivDrawHighlightSource === "deck" ? "yaniv-pile-highlight" : "";
+  const discardPileLabel = activeYanivSlamFlash ? "SLAM!!" : "Discard";
+  const discardPileLabelClass = activeYanivSlamFlash ? "yaniv-slam-label" : "";
 
   const myHandHtml = myYanivHand.length > 0
     ? myYanivHand
@@ -2186,12 +2221,15 @@ function renderYaniv() {
   yanivTableEl.innerHTML = `
     <div class="yaniv-area">
       <div class="yaniv-info-box">
-        <div class="split-piles-area normal-layout" style="display: grid; grid-template-columns: 1fr 1fr; margin-top: 0;">
+        <div class="split-piles-area normal-layout yaniv-top-piles" style="display: grid; grid-template-columns: 1fr 1fr; margin-top: 0;">
           <div
             class="split-pile split-pile-clickable ${discardPileHighlightClass}"
             style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px; ${pileActionStyle}"
             ${discardPileAction}
           >
+            <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
+              <strong class="${discardPileLabelClass}">${discardPileLabel}</strong>
+            </div>
             <div class="split-stack" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
               ${discardTop ? cardToText(discardTop) : `<div>Empty</div>`}
             </div>
@@ -2201,6 +2239,9 @@ function renderYaniv() {
             style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px; ${pileActionStyle}"
             ${drawPileAction}
           >
+            <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
+              <strong>Draw</strong>
+            </div>
             <div class="split-stack" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
               ${drawPileTop ? `<div class="card card-back-only ${drawPileBackClass}"><div class="card-back-pattern"></div></div>` : `<div>Empty</div>`}
             </div>
@@ -2214,7 +2255,7 @@ function renderYaniv() {
 
       <div class="yaniv-info-box">
         <div
-          class="split-pile split-pile-clickable"
+          class="split-pile split-pile-clickable yaniv-hand-pile"
           style="background-color: rgba(107, 168, 208, 0.85); justify-content: flex-start; padding: 12px;"
         >
           <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
@@ -2239,14 +2280,14 @@ function renderWhist() {
   if (panelHeaderEl) {
     panelHeaderEl.innerHTML = `
       ${renderSortToggle(isWhistResultsView)}
-      <h2 style="display:none;">Nomination Whist</h2>
+      <h2 style="display:none;">Whist</h2>
       <div class="tooltip-icon" title="Nominate tricks and win exactly that many">?</div>
     `;
   }
 
   const whistPanelH2 = document.querySelector('.panel[data-tab="whist"] h2');
   if (whistPanelH2) {
-    whistPanelH2.textContent = !state || !state.whist.nominationsComplete ? "Nominations" : "Nomination Whist";
+    whistPanelH2.textContent = !state || !state.whist.nominationsComplete ? "Nominations" : "Whist";
   }
 
   if (!state) {
@@ -2288,7 +2329,7 @@ function renderWhist() {
     const swapSelection = me?.swapSelection;
     const swapSelectionHtml = swapMode && swapSelection
       ? `
-        <div class="split-piles-area normal-layout" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;">
+        <div class="split-piles-area normal-layout whist-top-piles" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;">
           <div class="split-pile split-pile-clickable" style="background-color: rgba(209, 213, 219, 0.9); justify-content: flex-start; padding: 10px;">
             <div class="split-pile-header-clickable"><strong>Left Pile</strong></div>
             <div class="split-stack">
@@ -2324,8 +2365,8 @@ function renderWhist() {
       : `<div style="margin-top: 16px; padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 8px; text-align: center; font-style: italic;">Waiting for another player to nominate.</div>`;
 
     whistTableEl.innerHTML = `
-      <div class="split-piles-area normal-layout" style="display: grid; grid-template-columns: 1fr; margin-top: 20px;">
-        <div class="split-pile split-pile-clickable" style="background-color: rgba(200, 150, 224, 0.85); justify-content: flex-start; padding: 12px;">
+      <div class="split-piles-area normal-layout whist-hand-area" style="display: grid; grid-template-columns: 1fr; margin-top: 20px;">
+        <div class="split-pile split-pile-clickable whist-hand-pile" style="background-color: rgba(200, 150, 224, 0.85); justify-content: flex-start; padding: 12px;">
           <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
             <strong>${swapMode ? "Your Split For Robot / No-bot" : (isBlindRound ? "Your Blind Hand" : "Your Whist Hand")}</strong>
           </div>
@@ -2500,7 +2541,7 @@ function renderWhist() {
           .map((entry) => {
             const trickPlayerName = state.players[entry.playerIndex]?.name || `Player ${entry.playerIndex + 1}`;
             return `
-              <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+              <div class="whist-trick-entry" style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
                 <div>${trickPlayerName}</div>
                 <button class="split-card-button" disabled style="margin: 0; opacity: 1;">${cardToText(entry.card)}</button>
               </div>
@@ -2511,15 +2552,15 @@ function renderWhist() {
 
   whistTableEl.innerHTML = `
     <div class="whist-info-box">
-      <div class="split-pile split-pile-clickable" style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px;">
-        <div class="split-stack" style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: flex-start;">
+      <div class="split-pile split-pile-clickable whist-trick-pile" style="background-color: rgba(118, 184, 118, 0.85); justify-content: flex-start; padding: 12px;">
+        <div class="split-stack whist-trick-stack" style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: flex-start;">
           ${currentTrickCardsHtml}
         </div>
       </div>
     </div>
 
     <div class="whist-info-box" style="margin-top: 12px;">
-      <div class="split-pile split-pile-clickable" style="background-color: rgba(200, 150, 224, 0.85); justify-content: flex-start; padding: 12px;">
+      <div class="split-pile split-pile-clickable whist-hand-pile" style="background-color: rgba(200, 150, 224, 0.85); justify-content: flex-start; padding: 12px;">
         <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
           <strong>Your Whist Hand</strong>
         </div>
@@ -2537,18 +2578,6 @@ function renderWhist() {
 
 function cardToText(card) {
   if (!card) return "";
-
-  if (card.rank === "Joker") {
-    const backClass = getCardBackClass(card.backColor);
-
-    return `
-      <div class="card joker-card ${backClass}">
-        <div class="joker-image-wrapper">
-          <img src="images/cards/Joker.png" class="joker-image" />
-        </div>
-      </div>
-    `;
-  }
 
   if (card.rank === "Hidden") {
     const backClass = getCardBackClass(card.backColor);
@@ -2570,48 +2599,17 @@ function cardToText(card) {
     card.suit === "Hearts" || card.suit === "Diamonds" ? "red" : "black";
 
   const backClass = getCardBackClass(card.backColor);
-
-  const suitSymbol = suitSymbols[card.suit];
-
-  const pipLayouts = {
-    "A": ["center"],
-    "2": ["top", "bottom"],
-    "3": ["top", "center", "bottom"],
-    "4": ["top-left", "top-right", "bottom-left", "bottom-right"],
-    "5": ["top-left", "top-right", "center", "bottom-left", "bottom-right"],
-    "6": ["top-left", "top-right", "mid-left", "mid-right", "bottom-left", "bottom-right"],
-    "7": ["top-left", "top-right", "mid-left", "mid-right", "center-top", "bottom-left", "bottom-right"],
-    "8": ["top-left", "top-right", "mid-left", "mid-right", "center-top", "center-bottom", "bottom-left", "bottom-right"],
-    "9": ["top-left", "top-right", "mid-left", "mid-right", "center-top", "center", "center-bottom", "bottom-left", "bottom-right"],
-    "10": ["top-left", "top-right", "mid-left", "mid-right", "center-top-left", "center-top-right", "center-bottom-left", "center-bottom-right", "bottom-left", "bottom-right"]
-  };
-
-  let centerHtml = "";
-
-  if (["J", "Q", "K"].includes(card.rank)) {
-    const imagePath = `images/cards/${card.rank}-${card.suit}.png`;
-
-    centerHtml = `
-      <div class="face-image-wrapper">
-        <img src="${imagePath}" class="face-image" />
-      </div>
-    `;
-  } else {
-    const pipPositions = pipLayouts[card.rank] || ["center"];
-    centerHtml = `
-      <div class="pip-grid">
-        ${pipPositions.map((pos) => `<div class="pip pip-${pos}">${suitSymbol}</div>`).join("")}
-      </div>
-    `;
-  }
+  const isJoker = card.rank === "Joker";
+  const faceClass = isJoker ? "joker" : colorClass;
+  const rankText = isJoker ? 'J<span class="joker-suffix">o</span>' : card.rank;
+  const suitText = isJoker ? "" : suitSymbols[card.suit];
 
   return `
-    <div class="card ${colorClass} ${backClass}">
-      <div class="corner top-left">${card.rank}<br>${suitSymbol}</div>
-      <div class="corner top-right">${card.rank}<br>${suitSymbol}</div>
-      <div class="corner bottom-left">${card.rank}<br>${suitSymbol}</div>
-      <div class="corner bottom-right">${card.rank}<br>${suitSymbol}</div>
-      ${centerHtml}
+    <div class="card ${faceClass} ${backClass}">
+      <div class="simple-card-face ${faceClass}">
+        <span class="simple-card-rank">${rankText}</span>
+        ${suitText ? `<span class="simple-card-suit">${suitText}</span>` : ""}
+      </div>
     </div>
   `;
 }

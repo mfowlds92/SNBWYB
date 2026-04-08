@@ -78,7 +78,9 @@ yaniv: {
   slamPlayerIndex: null,
   selectedCardIds: [],
   lastDrawAction: null,
-  drawEventCounter: 0
+  drawEventCounter: 0,
+  lastSlamAction: null,
+  slamEventCounter: 0
 },
     
     whist: {
@@ -1410,6 +1412,8 @@ newState.brag = {
   newState.yaniv.selectedCardIds = [];
   newState.yaniv.lastDrawAction = null;
   newState.yaniv.drawEventCounter = 0;
+  newState.yaniv.lastSlamAction = null;
+  newState.yaniv.slamEventCounter = 0;
 
   newState.whist.started = false;
   newState.whist.currentPlayerIndex = null;
@@ -1772,6 +1776,11 @@ export function slamYanivCard(state, playerIndex) {
   newState.yaniv.justDrawnCard = null;
   newState.yaniv.canSlam = false;
   newState.yaniv.slamPlayerIndex = null;
+  newState.yaniv.slamEventCounter = (newState.yaniv.slamEventCounter || 0) + 1;
+  newState.yaniv.lastSlamAction = {
+    playerIndex,
+    eventId: newState.yaniv.slamEventCounter
+  };
 
   return { state: newState };
 }
@@ -2026,6 +2035,8 @@ newState.brag = {
   newState.yaniv.selectedCardIds = [];
   newState.yaniv.lastDrawAction = null;
   newState.yaniv.drawEventCounter = 0;
+  newState.yaniv.lastSlamAction = null;
+  newState.yaniv.slamEventCounter = 0;
 
   newState.whist.started = false;
   newState.whist.currentPlayerIndex = null;
@@ -2108,6 +2119,8 @@ export function jumpToRound(state, targetRound) {
   newState.yaniv.selectedCardIds = [];
   newState.yaniv.lastDrawAction = null;
   newState.yaniv.drawEventCounter = 0;
+  newState.yaniv.lastSlamAction = null;
+  newState.yaniv.slamEventCounter = 0;
 
   newState.whist.started = false;
   newState.whist.currentPlayerIndex = null;

@@ -294,6 +294,30 @@ function sendStateToRoom(roomId) {
   });
 }
 
+function drawNonJokerBragCommunityCard(state) {
+  const attemptedCardIds = new Set();
+
+  while (state.deck.length > 0) {
+    const card = state.deck.shift();
+    if (!card) return null;
+
+    if (card.rank !== "Joker") {
+      return card;
+    }
+
+    // Jokers cannot start face-up on the Brag table, so cycle them behind the deck.
+    state.deck.push(card);
+
+    if (attemptedCardIds.has(card.id)) {
+      return null;
+    }
+
+    attemptedCardIds.add(card.id);
+  }
+
+  return null;
+}
+
 function startBragRoundIfReady(state) {
   if (!state.whist.nominationsComplete) return;
   if (state.whist.robotNoBotPending) return;
@@ -313,7 +337,7 @@ function startBragRoundIfReady(state) {
   state.brag.finalTurnsRemaining = 0;
 
   for (let i = 0; i < 3; i++) {
-    const card = state.deck.shift();
+    const card = drawNonJokerBragCommunityCard(state);
     if (card) {
       state.brag.communityCards.push(card);
     }
