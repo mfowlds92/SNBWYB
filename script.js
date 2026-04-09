@@ -2836,6 +2836,7 @@ function cardToText(card) {
 }
 
 function getCardBackClass(backColor) {
+  if (backColor === "Yellow") return "yellow-back";
   if (backColor === "Green") return "green-back";
   if (backColor === "Blue") return "blue-back";
   return "red-back";

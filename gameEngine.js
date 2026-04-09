@@ -11,20 +11,29 @@ const ROUND_CONFIG_BY_PLAYER_COUNT = {
   3: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
   4: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
   5: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+  6: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+  7: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
+  8: [15, 14, 13, 12, 11, 10, 9, 10, 11, 12, 13, 14, 15],
 };
 
 const DECK_BACKS_BY_PLAYER_COUNT = {
   2: ["Red"],
   3: ["Red", "Blue"],
   4: ["Red", "Blue"],
-  5: ["Red", "Blue"],
+  5: ["Red", "Blue", "Green"],
+  6: ["Red", "Blue", "Green"],
+  7: ["Red", "Blue", "Green", "Yellow"],
+  8: ["Red", "Blue", "Green", "Yellow"],
 };
 
 const JOKER_BACKS_BY_PLAYER_COUNT = {
   2: ["Red", "Red"],
   3: ["Red", "Red", "Blue"],
   4: ["Red", "Red", "Blue", "Blue"],
-  5: ["Red", "Red", "Red", "Blue", "Blue"],
+  5: ["Red", "Red", "Blue", "Blue", "Green"],
+  6: ["Red", "Red", "Blue", "Blue", "Green", "Green"],
+  7: ["Red", "Red", "Blue", "Blue", "Green", "Green", "Yellow"],
+  8: ["Red", "Red", "Blue", "Blue", "Green", "Green", "Yellow", "Yellow"],
 };
 
 // ---------- HELPERS ----------
@@ -114,8 +123,13 @@ export function getRoundConfig(playerCount) {
   return ROUND_CONFIG_BY_PLAYER_COUNT[playerCount];
 }
 
+export function getMaxSupportedPlayers() {
+  return Math.max(...Object.keys(ROUND_CONFIG_BY_PLAYER_COUNT).map(Number));
+}
+
 export function getTotalRounds(playerCount) {
-  return getRoundConfig(playerCount).length;
+  const config = getRoundConfig(playerCount);
+  return config ? config.length : 0;
 }
 
 export function getTrumpLabel(state) {
@@ -170,6 +184,10 @@ export function createDeck(playerCount) {
   const deckBacks = DECK_BACKS_BY_PLAYER_COUNT[playerCount];
   const jokerBacks = JOKER_BACKS_BY_PLAYER_COUNT[playerCount];
 
+  if (!deckBacks || !jokerBacks) {
+    throw new Error(`Unsupported player count for deck creation: ${playerCount}`);
+  }
+
   deckBacks.forEach((backColor, deckIndex) => {
     SUITS.forEach((suit) => {
       RANKS.forEach((rank) => {
@@ -219,6 +237,9 @@ export function dealCards(state) {
   const newState = structuredClone(state);
 
   const cardsPerPlayer = getRoundHandSize(newState);
+  if (!Number.isInteger(cardsPerPlayer) || cardsPerPlayer <= 0) {
+    return { error: `Unsupported round configuration for ${newState.players.length} players` };
+  }
 
   newState.players.forEach(p => {
     p.hand = [];
@@ -236,6 +257,11 @@ export function dealCards(state) {
       const card = newState.deck.shift();
       if (card) player.hand.push(card);
     });
+  }
+
+  const anyShortHands = newState.players.some((player) => (player.hand?.length || 0) !== cardsPerPlayer);
+  if (anyShortHands) {
+    return { error: "Not enough cards available to deal this round" };
   }
 
   return { state: newState };
@@ -311,7 +337,8 @@ function compareBackColorStrength(a, b) {
   const tieValues = {
     Red: 1,
     Blue: 2,
-    Green: 3
+    Green: 3,
+    Yellow: 4
   };
 
   const aValue = tieValues[a.backColor] ?? 0;
@@ -464,9 +491,10 @@ const BRAG_RANK_VALUES = {
 };
 
 const BACK_COLOR_TIE_VALUES = {
-  "Red": 2,
-  "Blue": 1,
-  "Green": 0
+  "Red": 3,
+  "Blue": 2,
+  "Green": 1,
+  "Yellow": 0
 };
 
 function getBragCardValue(card) {
@@ -1430,6 +1458,9 @@ export function startGame(state) {
   let newState = structuredClone(state);
 
   const playerCount = newState.players.length;
+  if (!getRoundConfig(playerCount)) {
+    return { error: `Unsupported player count: ${playerCount}. Supported range is 2-${getMaxSupportedPlayers()}.` };
+  }
 
   let deck = createDeck(playerCount);
   deck = shuffleDeck(deck);

@@ -4,6 +4,7 @@ import { Server } from "socket.io";
 
 import {
   createInitialState,
+  getMaxSupportedPlayers,
   startGame,
   nextRound,
   playWhistCard,
@@ -34,6 +35,7 @@ app.use(express.static("."));
 
 let rooms = {};
 const LOBBY_CHANNEL = "__lobby__";
+const MAX_SUPPORTED_PLAYERS = getMaxSupportedPlayers();
 
 function createRoom(roomId, roomName = roomId, ownerPlayerId = null) {
   rooms[roomId] = {
@@ -557,8 +559,8 @@ io.on("connection", (socket) => {
     }
 
     if (playerIndex === -1) {
-      if (room.playerIds.length >= 10) {
-        socket.emit("errorMessage", "Room is full.");
+      if (room.playerIds.length >= MAX_SUPPORTED_PLAYERS) {
+        socket.emit("errorMessage", `Room is full. Maximum supported players is ${MAX_SUPPORTED_PLAYERS}.`);
         return;
       }
       room.playerIds.push(playerId);
@@ -610,6 +612,11 @@ io.on("connection", (socket) => {
 
     if (room.playerIds.length < 2) {
       socket.emit("errorMessage", "Need at least 2 players to start.");
+      return;
+    }
+
+    if (room.playerIds.length > MAX_SUPPORTED_PLAYERS) {
+      socket.emit("errorMessage", `This game currently supports at most ${MAX_SUPPORTED_PLAYERS} players.`);
       return;
     }
 
