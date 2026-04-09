@@ -81,6 +81,7 @@ yaniv: {
   started: false,
   drawPile: [],
   discardPile: [],
+  lastDiscardGroup: [],
   currentPlayerIndex: null,
   pendingDiscard: [],
   result: null,
@@ -335,10 +336,10 @@ function getActualTrumpSuit(state) {
 
 function compareBackColorStrength(a, b) {
   const tieValues = {
-    Red: 1,
-    Blue: 2,
-    Green: 3,
-    Yellow: 4
+    Red: 4,
+    Blue: 3,
+    Green: 2,
+    Yellow: 1
   };
 
   const aValue = tieValues[a.backColor] ?? 0;
@@ -1494,6 +1495,7 @@ newState.brag = {
   newState.yaniv.started = false;
   newState.yaniv.drawPile = [];
   newState.yaniv.discardPile = [];
+  newState.yaniv.lastDiscardGroup = [];
   newState.yaniv.currentPlayerIndex = null;
   newState.yaniv.pendingDiscard = [];
   newState.yaniv.result = null;
@@ -1686,6 +1688,7 @@ export function startYaniv(state) {
   newState.yaniv.slamPlayerIndex = null;
   newState.yaniv.drawPile = yanivDeck;
   newState.yaniv.discardPile = firstDiscard ? [firstDiscard] : [];
+  newState.yaniv.lastDiscardGroup = firstDiscard ? [firstDiscard] : [];
   newState.yaniv.currentPlayerIndex = getPlayerOrderFromLeftOfDealer(newState)[0] ?? 0;
   newState.yaniv.selectedCardIds = [];
 
@@ -1775,6 +1778,7 @@ export function drawFromYanivDeck(state, playerIndex) {
 
   // Show the just-discarded cards immediately on the table.
   newState.yaniv.discardPile.push(...newState.yaniv.pendingDiscard);
+  newState.yaniv.lastDiscardGroup = [...newState.yaniv.pendingDiscard];
   newState.yaniv.pendingDiscard = [];
 
   if (canSlamNow) {
@@ -1824,6 +1828,7 @@ export function drawFromYanivDiscard(state, playerIndex) {
   player.assignments.yaniv.push(topDiscard);
 
   newState.yaniv.discardPile.push(...newState.yaniv.pendingDiscard);
+  newState.yaniv.lastDiscardGroup = [...newState.yaniv.pendingDiscard];
   newState.yaniv.pendingDiscard = [];
   newState.yaniv.justDrawnCard = null;
   newState.yaniv.canSlam = false;
@@ -1864,6 +1869,7 @@ export function slamYanivCard(state, playerIndex) {
 
   // add slam card to discard pile (discarded cards are already on pile)
   newState.yaniv.discardPile.push(newState.yaniv.justDrawnCard);
+  newState.yaniv.lastDiscardGroup = [newState.yaniv.justDrawnCard];
 
   newState.yaniv.pendingDiscard = [];
   newState.yaniv.justDrawnCard = null;
@@ -1894,6 +1900,7 @@ export function continueWithoutSlam(state, playerIndex) {
   }
 
   newState.yaniv.discardPile.push(...newState.yaniv.pendingDiscard);
+  newState.yaniv.lastDiscardGroup = [...newState.yaniv.pendingDiscard];
 
   newState.yaniv.pendingDiscard = [];
   newState.yaniv.justDrawnCard = null;
@@ -2065,6 +2072,7 @@ export function callYaniv(state, playerIndex) {
   newState.yaniv.result = result;
   newState.yaniv.drawPile = [];
   newState.yaniv.discardPile = [];
+  newState.yaniv.lastDiscardGroup = [];
   newState.yaniv.pendingDiscard = [];
 
   if (newState.currentRoundSummary) {
@@ -2127,6 +2135,7 @@ newState.brag = {
   newState.yaniv.started = false;
   newState.yaniv.drawPile = [];
   newState.yaniv.discardPile = [];
+  newState.yaniv.lastDiscardGroup = [];
   newState.yaniv.currentPlayerIndex = null;
   newState.yaniv.pendingDiscard = [];
   newState.yaniv.result = null;
@@ -2215,6 +2224,7 @@ export function jumpToRound(state, targetRound) {
   newState.yaniv.started = false;
   newState.yaniv.drawPile = [];
   newState.yaniv.discardPile = [];
+  newState.yaniv.lastDiscardGroup = [];
   newState.yaniv.currentPlayerIndex = null;
   newState.yaniv.pendingDiscard = [];
   newState.yaniv.result = null;

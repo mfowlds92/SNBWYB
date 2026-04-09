@@ -1571,15 +1571,17 @@ function renderPlayerStatusBoxes() {
 
   boxesEl.innerHTML = sortedPlayers.map((player) => {
     const isCurrentTurn = player.index === currentTurnPlayerIndex;
+    const hasSavedSplit = !!player.assignments || !!player.swapSelection;
     let statusClass = "";
 
-    if (isDuringSplit && !!player.assignments) {
+    if (isDuringSplit && hasSavedSplit) {
       statusClass = "player-deck-submitted";
     } else if (isCurrentTurn) {
       statusClass = "player-turn-active";
     }
 
-    const nominationText = player.nomination !== null && player.nomination !== undefined ? player.nomination : "-";
+    const hasSavedNomination = player.nomination !== null && player.nomination !== undefined && player.nomination !== "";
+    const nominationText = hasSavedNomination ? player.nomination : "-";
     const tricksWon = state.whist?.tricksWon?.[player.index] ?? 0;
     const isWhistLive = !!state.whist?.started;
     const phaseNomText = isWhistLive ? `${tricksWon}/${nominationText}` : `Nom: ${nominationText}`;
@@ -2390,7 +2392,9 @@ function renderYaniv() {
   yanivControlsEl.innerHTML = "";
 
   // Render the table with hands and discard pile
-  const discardTop = state.yaniv.discardPile.length > 0 ? state.yaniv.discardPile[state.yaniv.discardPile.length - 1] : null;
+  const discardPreviewCards = Array.isArray(state.yaniv.lastDiscardGroup) && state.yaniv.lastDiscardGroup.length > 0
+    ? state.yaniv.lastDiscardGroup
+    : state.yaniv.discardPile.slice(-1);
   const drawPileTop = Array.isArray(state.yaniv.drawPile) && state.yaniv.drawPile.length > 0 ? state.yaniv.drawPile[0] : null;
   const drawPileBackClass = drawPileTop ? getCardBackClass(drawPileTop.backColor) : "";
   const discardPileAction = canUsePileActions ? `onclick="window.discardAndDrawFromYanivDiscardHandler()"` : "";
@@ -2403,6 +2407,15 @@ function renderYaniv() {
   const drawPileHighlightClass = activeYanivDrawHighlightSource === "deck" ? "yaniv-pile-highlight" : "";
   const discardPileLabel = activeYanivSlamFlash ? "SLAM!!" : "Discard";
   const discardPileLabelClass = activeYanivSlamFlash ? "yaniv-slam-label" : "";
+  const discardPreviewHtml = discardPreviewCards.length > 0
+    ? discardPreviewCards
+        .map((card, index) => `
+          <div class="yaniv-discard-preview-card" style="z-index: ${index + 1};">
+            ${cardToText(card)}
+          </div>
+        `)
+        .join("")
+    : `<div>Empty</div>`;
 
   const myHandHtml = myYanivHand.length > 0
     ? myYanivHand
@@ -2436,8 +2449,8 @@ function renderYaniv() {
             <div class="split-pile-header-clickable" style="width: 100%; margin-bottom: 12px;">
               <strong class="${discardPileLabelClass}">${discardPileLabel}</strong>
             </div>
-            <div class="split-stack" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
-              ${discardTop ? cardToText(discardTop) : `<div>Empty</div>`}
+            <div class="split-stack yaniv-discard-preview-stack" style="display: flex; flex-wrap: nowrap; justify-content: flex-start;">
+              ${discardPreviewHtml}
             </div>
           </div>
           <div

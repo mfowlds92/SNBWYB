@@ -1368,6 +1368,26 @@ select[multiple] {
   box-shadow: inset 0 0 0 2px #eab308, 0 5px 14px rgba(15, 23, 42, 0.18);
 }
 
+.card.card-back-only.red-back {
+  outline: 2px solid #ef4444;
+  outline-offset: -2px;
+}
+
+.card.card-back-only.blue-back {
+  outline: 2px solid #3b82f6;
+  outline-offset: -2px;
+}
+
+.card.card-back-only.green-back {
+  outline: 2px solid #22c55e;
+  outline-offset: -2px;
+}
+
+.card.card-back-only.yellow-back {
+  outline: 2px solid #eab308;
+  outline-offset: -2px;
+}
+
 .simple-card-face {
   position: absolute;
   top: 4px;
@@ -2133,6 +2153,21 @@ select {
 
 .yaniv-piles-clickable {
   grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+
+.yaniv-discard-preview-stack {
+  align-items: flex-start;
+  min-height: 88px;
+  overflow: visible;
+}
+
+.yaniv-discard-preview-card {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.yaniv-discard-preview-card + .yaniv-discard-preview-card {
+  margin-left: -34px;
 }
 
 .clickable-pile {
