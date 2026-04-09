@@ -4,6 +4,7 @@ let roomId = localStorage.getItem("nsybwb_room_id") || null;
 let playerId = localStorage.getItem("nsybwb_player_id") || null;
 let lobbyRooms = [];
 let roomMeta = null;
+let systemDebugMetrics = null;
 
 let state = null;
 let playerIndex = null;
@@ -190,6 +191,11 @@ socket.on("sessionReady", (payload) => {
 socket.on("lobbyUpdate", ({ rooms }) => {
   lobbyRooms = rooms || [];
   render();
+});
+
+socket.on("debugSystemMetrics", (metrics) => {
+  systemDebugMetrics = metrics || null;
+  renderDebugMetrics();
 });
 
 socket.on("roomJoined", ({ roomId: joinedRoomId, playerIndex: joinedPlayerIndex, ...meta }) => {
@@ -1677,8 +1683,8 @@ function renderDebugMetrics() {
   const footerEl = document.getElementById("debugMetricsFooter");
   if (!footerEl) return;
 
-  const metrics = state?.debugMetrics;
-  if (!state?.trumpCard || !metrics) {
+  const metrics = state?.debugMetrics || systemDebugMetrics;
+  if (!metrics) {
     footerEl.innerHTML = "";
     footerEl.style.display = "none";
     return;

@@ -87,9 +87,41 @@ function getRoomSummaries() {
   }));
 }
 
+function getSystemDebugMetrics() {
+  const processMemory = process.memoryUsage();
+  const roomList = Object.values(rooms);
+  const totalChatMessages = roomList.reduce((sum, room) => sum + (room.chatMessages?.length || 0), 0);
+  const totalRoomStateBytes = roomList.reduce((sum, room) => sum + getStateByteSize(room.state || {}), 0);
+  const totalRoundHistoryBytes = roomList.reduce(
+    (sum, room) => sum + getStateByteSize(room.state?.roundHistory || []),
+    0
+  );
+
+  return {
+    roomStateBytes: totalRoomStateBytes,
+    clientStateBytes: totalRoomStateBytes,
+    roundHistoryBytes: totalRoundHistoryBytes,
+    rssBytes: processMemory.rss,
+    heapTotalBytes: processMemory.heapTotal,
+    heapUsedBytes: processMemory.heapUsed,
+    externalBytes: processMemory.external,
+    arrayBuffersBytes: processMemory.arrayBuffers || 0,
+    roomCount: roomList.length,
+    connectedSockets: io.sockets.sockets.size,
+    totalChatMessages,
+    playerCount: roomList.reduce((sum, room) => sum + (room.playersList?.length || 0), 0),
+    round: 0
+  };
+}
+
+function emitSystemDebugMetrics() {
+  io.emit("debugSystemMetrics", getSystemDebugMetrics());
+}
+
 function emitLobbyUpdate() {
   const lobbyRooms = getRoomSummaries();
   io.to(LOBBY_CHANNEL).emit("lobbyUpdate", { rooms: lobbyRooms });
+  emitSystemDebugMetrics();
 }
 
 function isSocketInLobby(socket) {
@@ -336,6 +368,8 @@ function sendStateToRoom(roomId) {
       debugRoomSummary: buildRoomDebugSummary(room)
     });
   });
+
+  emitSystemDebugMetrics();
 }
 
 function drawNonJokerBragCommunityCard(state) {
@@ -430,6 +464,7 @@ io.on("connection", (socket) => {
       playerIndex: restoredPlayerIndex,
       rooms: getRoomSummaries()
     });
+    socket.emit("debugSystemMetrics", getSystemDebugMetrics());
 
     if (restoredRoomId) {
       sendStateToRoom(restoredRoomId);
@@ -486,6 +521,7 @@ io.on("connection", (socket) => {
       gameStarted: room.gameStarted
     });
     socket.emit("chatHistory", { roomId, messages: room.chatMessages || [] });
+    socket.emit("debugSystemMetrics", getSystemDebugMetrics());
     sendStateToRoom(roomId);
     emitLobbyUpdate();
   });
